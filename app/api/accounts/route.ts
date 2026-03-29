@@ -3,14 +3,13 @@ import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import { AccountModel } from "@/lib/models/Account";
 import { getCurrentUser } from "@/lib/currentUser";
-import { accountFilterForUser } from "@/lib/accountAccess";
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await connectDB();
-  const accounts = await AccountModel.find(accountFilterForUser(user))
+  const accounts = await AccountModel.find({})
     .sort({ createdAt: -1 })
     .lean();
   return NextResponse.json(

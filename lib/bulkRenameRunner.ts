@@ -299,11 +299,10 @@ export async function createBulkRenameJob(ownerId: mongoose.Types.ObjectId, prom
   await connectDB();
   const accounts = await AccountModel.find({
     _id: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
-    ownerId,
   }).lean();
 
   if (accounts.length !== accountIds.length) {
-    throw new Error("One or more accounts not found or not owned by you");
+    throw new Error("One or more accounts not found");
   }
 
   const items = accounts.map((a: any) => ({

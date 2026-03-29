@@ -11,8 +11,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ upl
   if (!uploadId) return NextResponse.json({ error: "Missing uploadId" }, { status: 400 });
 
   await connectDB();
-  const ownerId = (user as { _id: unknown })._id;
-  const rows = await UploadModel.find({ uploadId, ownerId }).lean();
+  const rows = await UploadModel.find({ uploadId }).lean();
   if (rows.length === 0) {
     return NextResponse.json({ error: "Batch not found" }, { status: 404 });
   }

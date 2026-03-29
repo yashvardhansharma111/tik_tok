@@ -14,8 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
   }
 
   await connectDB();
-  const ownerId = (user as { _id: unknown })._id;
-  const job = await RenameJobModel.findOne({ _id: jobId, ownerId }).lean();
+  const job = await RenameJobModel.findOne({ _id: jobId }).lean();
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const j = job as {

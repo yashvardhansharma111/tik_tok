@@ -4,21 +4,15 @@ import { connectDB } from "@/lib/db";
 import { AccountModel } from "@/lib/models/Account";
 import { UploadModel } from "@/lib/models/Upload";
 import { getCurrentUser } from "@/lib/currentUser";
-import { accountFilterForUser, uploadFilterForUser } from "@/lib/accountAccess";
-
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await connectDB();
-  const access = accountFilterForUser(user);
-  const myAccounts = await AccountModel.find(access, { _id: 1 }).lean();
-  const myAccountIds = myAccounts.map((a: { _id: unknown }) => a._id);
-  const uploadScope = uploadFilterForUser(user, myAccountIds as any);
-  const totalAccounts = await AccountModel.countDocuments(access);
-  const last = await UploadModel.findOne(uploadScope).sort({ timestamp: -1 }).lean();
-  const history = await UploadModel.find(uploadScope).sort({ timestamp: -1 }).limit(20).lean();
-  const accounts = await AccountModel.find(access, { username: 1 }).lean();
+  const totalAccounts = await AccountModel.countDocuments({});
+  const last = await UploadModel.findOne({}).sort({ timestamp: -1 }).lean();
+  const history = await UploadModel.find({}).sort({ timestamp: -1 }).limit(20).lean();
+  const accounts = await AccountModel.find({}, { username: 1 }).lean();
   const map = new Map(accounts.map((a: any) => [String(a._id), a.username]));
 
   return NextResponse.json({

@@ -12,7 +12,6 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { AccountModel } from "@/lib/models/Account";
 import { UploadModel } from "@/lib/models/Upload";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
-import { accountFilterForUser } from "@/lib/accountAccess";
 
 export const maxDuration = 600;
 export const runtime = "nodejs";
@@ -120,19 +119,16 @@ export async function POST(request: Request) {
 
     await connectDB();
     const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
-    const access = accountFilterForUser(user);
     const accounts = await AccountModel.find({
       _id: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
-      ...access,
     }).lean();
     if (accounts.length !== accountIds.length) {
-      return NextResponse.json({ error: "One or more accounts not found or not yours" }, { status: 403 });
+      return NextResponse.json({ error: "One or more accounts not found" }, { status: 403 });
     }
 
     const oidAccountIds = accountIds.map((id) => new mongoose.Types.ObjectId(id));
     await UploadModel.updateMany(
       {
-        ownerId,
         accountId: { $in: oidAccountIds },
         status: "pending",
         uploadId: { $ne: uploadId },

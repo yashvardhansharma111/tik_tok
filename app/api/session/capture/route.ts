@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     await connectDB();
     const sessionJson = await captureTikTokStorageState(proxy || undefined);
     const ownerId = (user as { _id: unknown })._id;
-    const filter = accountId ? { _id: accountId, ownerId } : { username, ownerId };
+    const filter = accountId ? { _id: accountId } : { username };
     const update: Record<string, unknown> = {
       ...(username ? { username } : {}),
       session: sessionJson,

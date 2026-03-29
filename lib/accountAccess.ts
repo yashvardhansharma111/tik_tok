@@ -1,34 +1,16 @@
-import type { Types } from "mongoose";
-
 type UserLike = { _id: unknown; role?: string } | null;
 
 /**
- * Accounts and uploads are scoped to the app user who created them (`ownerId`).
- * Admins still only see their own linked accounts/uploads unless you extend this.
+ * Shared pool: every logged-in user sees and can use all TikTok accounts (no per-user isolation).
+ * Use `{ _id: null }` only when there is no user (should not query accounts).
  */
 export function accountFilterForUser(user: UserLike): Record<string, unknown> {
   if (!user?._id) return { _id: null };
-  return { ownerId: user._id };
+  return {};
 }
 
-/**
- * Upload rows: prefer `ownerId`; include legacy rows without `ownerId` only when
- * the upload targets an account owned by this user.
- */
-export function uploadFilterForUser(
-  user: UserLike,
-  myAccountIds: Types.ObjectId[]
-): Record<string, unknown> {
-  if (!user?._id) return { _id: null };
-  const ownerId = user._id as Types.ObjectId;
-  if (!myAccountIds.length) return { ownerId };
-  return {
-    $or: [
-      { ownerId },
-      {
-        accountId: { $in: myAccountIds },
-        $or: [{ ownerId: { $exists: false } }, { ownerId: null }],
-      },
-    ],
-  };
+/** Upload history: show all uploads for everyone (shared dashboard). */
+export function uploadFilterForUser(_user: UserLike): Record<string, unknown> {
+  if (!_user?._id) return { _id: null };
+  return {};
 }
