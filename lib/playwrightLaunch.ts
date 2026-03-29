@@ -42,11 +42,17 @@ function useLinuxStyleSandboxArgs(): boolean {
   return process.platform === "linux";
 }
 
+/**
+ * Production VPS / Docker / AlmaLinux: required by many hosts (root, small `/dev/shm`, no user namespaces).
+ * Equivalent to:
+ *   chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
+ * We also prepend automation + any PLAYWRIGHT_CHROMIUM_ARGS.
+ */
+const LINUX_SERVER_LAUNCH_ARGS = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] as const;
+
 function buildDefaultArgs(): string[] {
   const base = ["--disable-blink-features=AutomationControlled"];
-  const linux = useLinuxStyleSandboxArgs()
-    ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    : [];
+  const linux = useLinuxStyleSandboxArgs() ? [...LINUX_SERVER_LAUNCH_ARGS] : [];
   const extra =
     process.env.PLAYWRIGHT_CHROMIUM_ARGS?.split(/\s+/)
       .map((s) => s.trim())
@@ -90,6 +96,7 @@ export function getChromiumLaunchOptions(_purpose?: PlaywrightPurpose): LaunchOp
 
   const linuxish = useLinuxStyleSandboxArgs();
   const opts: LaunchOptions = {
+    // headless follows resolveHeadless(); on Linux VPS without DISPLAY this is typically true — pairs with LINUX_SERVER_LAUNCH_ARGS.
     headless,
     args: buildDefaultArgs(),
     ...(linuxish ? { chromiumSandbox: false } : {}),
