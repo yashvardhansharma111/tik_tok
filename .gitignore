@@ -24,6 +24,12 @@
 .DS_Store
 *.pem
 
+# Playwright upload flow screenshots (automation/uploadWorker.ts)
+/storage/debug/
+
+# Successful sound labels per account+query (lib/soundCache.ts)
+/storage/sound-cache.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*

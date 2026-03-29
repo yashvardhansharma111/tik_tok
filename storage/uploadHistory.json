@@ -1,0 +1,726 @@
+[
+  {
+    "id": "hist-1773846218198-aaumlvi",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773846218110-bmw.mp4",
+    "caption": "bmw",
+    "status": "success",
+    "timestamp": "2026-03-18T15:03:38.198Z"
+  },
+  {
+    "id": "hist-1773846218155-x1m7733",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773846218110-bmw.mp4",
+    "caption": "bmw",
+    "status": "success",
+    "timestamp": "2026-03-18T15:03:38.155Z"
+  },
+  {
+    "id": "hist-1773846218131-8jz9aas",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773846218110-bmw.mp4",
+    "caption": "bmw",
+    "status": "success",
+    "timestamp": "2026-03-18T15:03:38.131Z"
+  },
+  {
+    "id": "hist-1773846218124-c51vpdg",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773846218110-bmw.mp4",
+    "caption": "bmw",
+    "status": "success",
+    "timestamp": "2026-03-18T15:03:38.124Z"
+  },
+  {
+    "id": "hist-1773845987815-n4dwdlq",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773845987752-nature_view.mp4",
+    "caption": "nature view",
+    "status": "success",
+    "timestamp": "2026-03-18T14:59:47.815Z"
+  },
+  {
+    "id": "hist-1773845987794-ey6pfj8",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773845987752-nature_view.mp4",
+    "caption": "nature view",
+    "status": "success",
+    "timestamp": "2026-03-18T14:59:47.794Z"
+  },
+  {
+    "id": "hist-1773845987770-jaf7mpj",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773845987752-nature_view.mp4",
+    "caption": "nature view",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:59:47.770Z",
+    "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"]').first()\u001b[22m\n\u001b[2m    - locator resolved to <div role=\"combobox\" spellcheck=\"false\" aria-expanded=\"false\" contenteditable=\"true\" aria-autocomplete=\"list\" class=\"notranslate public-DraftEditor-content\">…</div>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\"></div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    19 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\"></div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  33 × retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m       - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 500ms\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773845987767-cz1eqmo",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773845987752-nature_view.mp4",
+    "caption": "nature view",
+    "status": "success",
+    "timestamp": "2026-03-18T14:59:47.767Z"
+  },
+  {
+    "id": "hist-1773845745029-0iyeyxy",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773845744947-AQMLaeSDbcUHW6xQAp_F5_eRDO0BZYTjCoExmsLPcKPa7lxOUDmMWRg7vuUvTaK3YzLKS0muS98ded9JsEjipEvH5PI9Ppi3pZFzGKo.mp4",
+    "caption": "computer life",
+    "status": "success",
+    "timestamp": "2026-03-18T14:55:45.030Z"
+  },
+  {
+    "id": "hist-1773845745006-92xyycb",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773845744947-AQMLaeSDbcUHW6xQAp_F5_eRDO0BZYTjCoExmsLPcKPa7lxOUDmMWRg7vuUvTaK3YzLKS0muS98ded9JsEjipEvH5PI9Ppi3pZFzGKo.mp4",
+    "caption": "computer life",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:55:45.006Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773845744973-1s6hz7m",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773845744947-AQMLaeSDbcUHW6xQAp_F5_eRDO0BZYTjCoExmsLPcKPa7lxOUDmMWRg7vuUvTaK3YzLKS0muS98ded9JsEjipEvH5PI9Ppi3pZFzGKo.mp4",
+    "caption": "computer life",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:55:44.973Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773845744965-1v5ic23",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773845744947-AQMLaeSDbcUHW6xQAp_F5_eRDO0BZYTjCoExmsLPcKPa7lxOUDmMWRg7vuUvTaK3YzLKS0muS98ded9JsEjipEvH5PI9Ppi3pZFzGKo.mp4",
+    "caption": "computer life",
+    "status": "success",
+    "timestamp": "2026-03-18T14:55:44.965Z"
+  },
+  {
+    "id": "hist-1773845529922-f056zwd",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773845529855-AQMyOs9OkCnrjCmmfpXkRICd92JBnrg4iJVLE4w6aY-AWYxxlxrtcYVRUy7h7Y5EeXvPEdVyhbj1rSy0cpsCi7-zwWIej2QYm8BEKio.mp4",
+    "caption": "thief jsdfk .. ",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:52:09.922Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773845529898-sojwncu",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773845529855-AQMyOs9OkCnrjCmmfpXkRICd92JBnrg4iJVLE4w6aY-AWYxxlxrtcYVRUy7h7Y5EeXvPEdVyhbj1rSy0cpsCi7-zwWIej2QYm8BEKio.mp4",
+    "caption": "thief jsdfk .. ",
+    "status": "success",
+    "timestamp": "2026-03-18T14:52:09.898Z"
+  },
+  {
+    "id": "hist-1773845529870-vuwhlsg",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773845529855-AQMyOs9OkCnrjCmmfpXkRICd92JBnrg4iJVLE4w6aY-AWYxxlxrtcYVRUy7h7Y5EeXvPEdVyhbj1rSy0cpsCi7-zwWIej2QYm8BEKio.mp4",
+    "caption": "thief jsdfk .. ",
+    "status": "success",
+    "timestamp": "2026-03-18T14:52:09.870Z"
+  },
+  {
+    "id": "hist-1773845529865-iweu8sf",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773845529855-AQMyOs9OkCnrjCmmfpXkRICd92JBnrg4iJVLE4w6aY-AWYxxlxrtcYVRUy7h7Y5EeXvPEdVyhbj1rSy0cpsCi7-zwWIej2QYm8BEKio.mp4",
+    "caption": "thief jsdfk .. ",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:52:09.865Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773844968873-9cx4c7s",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773844968799-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "this this this this ",
+    "status": "failed",
+    "timestamp": "2026-03-18T14:42:48.873Z",
+    "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"]').first()\u001b[22m\n\u001b[2m    - locator resolved to <div role=\"combobox\" spellcheck=\"false\" aria-expanded=\"false\" contenteditable=\"true\" aria-autocomplete=\"list\" class=\"notranslate public-DraftEditor-content\">…</div>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\"></div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m    - element is visible, enabled and stable\u001b[22m\n\u001b[2m    - scrolling into view if needed\u001b[22m\n\u001b[2m    - done scrolling\u001b[22m\n\u001b[2m    - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m  - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    53 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div role=\"presentation\" data-test-id=\"overlay\" class=\"react-joyride__overlay\">…</div> from <div id=\"react-joyride-portal\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773844968834-3e65ibd",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773844968799-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "this this this this ",
+    "status": "success",
+    "timestamp": "2026-03-18T14:42:48.834Z"
+  },
+  {
+    "id": "hist-1773844968829-4a661up",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773844968799-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "this this this this ",
+    "status": "success",
+    "timestamp": "2026-03-18T14:42:48.830Z"
+  },
+  {
+    "id": "hist-1773824477938-qcfpfgd",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.938Z"
+  },
+  {
+    "id": "hist-1773824477925-0vkencw",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.925Z"
+  },
+  {
+    "id": "hist-1773824477912-vmjszja",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.913Z"
+  },
+  {
+    "id": "hist-1773824477889-fihcx3e",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.889Z"
+  },
+  {
+    "id": "hist-1773824477874-4lbpvwq",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.874Z"
+  },
+  {
+    "id": "hist-1773824477872-lahi90r",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773824477851-Book_now_______wadding__trendingreels__foryou__gorilla__funny.mp4",
+    "caption": "book now #gorilla 😂😂",
+    "status": "success",
+    "timestamp": "2026-03-18T09:01:17.872Z"
+  },
+  {
+    "id": "hist-1773824269546-0kqwea4",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "success",
+    "timestamp": "2026-03-18T08:57:49.546Z"
+  },
+  {
+    "id": "hist-1773824269520-lwn5h8h",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "success",
+    "timestamp": "2026-03-18T08:57:49.520Z"
+  },
+  {
+    "id": "hist-1773824269497-rxq0nqf",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "failed",
+    "timestamp": "2026-03-18T08:57:49.497Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773824269480-5fvab52",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "success",
+    "timestamp": "2026-03-18T08:57:49.480Z"
+  },
+  {
+    "id": "hist-1773824269461-7byanm9",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "success",
+    "timestamp": "2026-03-18T08:57:49.461Z"
+  },
+  {
+    "id": "hist-1773824269458-2a8pvqy",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773824269445-bmw.mp4",
+    "caption": "supra",
+    "status": "success",
+    "timestamp": "2026-03-18T08:57:49.458Z"
+  },
+  {
+    "id": "hist-1773824021830-6x92m1y",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.830Z"
+  },
+  {
+    "id": "hist-1773824021812-8u9a124",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.812Z"
+  },
+  {
+    "id": "hist-1773824021793-bg7usg2",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.793Z"
+  },
+  {
+    "id": "hist-1773824021774-g585eaf",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.774Z"
+  },
+  {
+    "id": "hist-1773824021758-2hkd1a3",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.758Z"
+  },
+  {
+    "id": "hist-1773824021754-dnv5adk",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773824021742-bmw.mp4",
+    "caption": "supra is the best ... #edit",
+    "status": "success",
+    "timestamp": "2026-03-18T08:53:41.754Z"
+  },
+  {
+    "id": "hist-1773823788102-zpa4113",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "failed",
+    "timestamp": "2026-03-18T08:49:48.102Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773823788084-np3552w",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "success",
+    "timestamp": "2026-03-18T08:49:48.084Z"
+  },
+  {
+    "id": "hist-1773823788068-5teu7eh",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "success",
+    "timestamp": "2026-03-18T08:49:48.068Z"
+  },
+  {
+    "id": "hist-1773823788053-af4w2tc",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "success",
+    "timestamp": "2026-03-18T08:49:48.053Z"
+  },
+  {
+    "id": "hist-1773823788037-vntjimc",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "success",
+    "timestamp": "2026-03-18T08:49:48.037Z"
+  },
+  {
+    "id": "hist-1773823788034-0hkm2ng",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773823788017-bmw.mp4",
+    "caption": "supra edit ,,,🚘🚘🚔 .....",
+    "status": "success",
+    "timestamp": "2026-03-18T08:49:48.034Z"
+  },
+  {
+    "id": "hist-1773823243155-29hzqy5",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.155Z"
+  },
+  {
+    "id": "hist-1773823243137-2h6hmzj",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.137Z"
+  },
+  {
+    "id": "hist-1773823243122-35xdq23",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.122Z"
+  },
+  {
+    "id": "hist-1773823243081-dmt8gx8",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.081Z"
+  },
+  {
+    "id": "hist-1773823243058-i6g621v",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.058Z"
+  },
+  {
+    "id": "hist-1773823243054-t6nv13l",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773823243021-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "success",
+    "timestamp": "2026-03-18T08:40:43.054Z"
+  },
+  {
+    "id": "hist-1773822952982-eh1wgrj",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.982Z"
+  },
+  {
+    "id": "hist-1773822952963-18fk5oy",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.963Z"
+  },
+  {
+    "id": "hist-1773822952943-aybn6df",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.943Z"
+  },
+  {
+    "id": "hist-1773822952920-a4qrhnx",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.920Z"
+  },
+  {
+    "id": "hist-1773822952904-xods77z",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.904Z"
+  },
+  {
+    "id": "hist-1773822952901-1oakptt",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773822952867-single_life.mp4",
+    "caption": "pov single life is best ..... ",
+    "status": "success",
+    "timestamp": "2026-03-18T08:35:52.901Z"
+  },
+  {
+    "id": "hist-1773816610200-grkw8wg",
+    "accountId": "acc-1773815051160",
+    "accountUsername": "monica.hull4",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.200Z",
+    "error": "Error reading storage state from D:\\tik_tok\\storage\\cookies\\monica.hull4:\nENOENT: no such file or directory, open 'D:\\tik_tok\\storage\\cookies\\monica.hull4'"
+  },
+  {
+    "id": "hist-1773816610183-uqaq6h4",
+    "accountId": "acc-charlie",
+    "accountUsername": "charlie.jenkins721",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.183Z",
+    "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('button').nth(24)\u001b[22m\n\u001b[2m    - locator resolved to <button role=\"button\" type=\"button\" data-size=\"large\" data-loading=\"false\" aria-disabled=\"false\" data-disabled=\"false\" data-icon-only=\"false\" data-e2e=\"post_video_button\" class=\"Button__root Button__root--shape-default Button__root--size-large Button__root--type-primary Button__root--loading-false\">…</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div dir=\"ltr\" class=\"TUXModal-overlay\" data-transition-status=\"open\" data-tux-color-scheme=\"light\">…</div> from <div id=\":r68:\" data-floating-ui-portal=\"\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div dir=\"ltr\" class=\"TUXModal-overlay\" data-transition-status=\"open\" data-tux-color-scheme=\"light\">…</div> from <div id=\":r68:\" data-floating-ui-portal=\"\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    55 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div dir=\"ltr\" class=\"TUXModal-overlay\" data-transition-status=\"open\" data-tux-color-scheme=\"light\">…</div> from <div id=\":r68:\" data-floating-ui-portal=\"\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773816610161-b7e3uoc",
+    "accountId": "acc-erin",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.161Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773816610142-s5mvppj",
+    "accountId": "acc-marilyn",
+    "accountUsername": "marilyn.hubbard68",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.142Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773816610122-ikqjx4c",
+    "accountId": "acc-lola",
+    "accountUsername": "lola.lloyd5",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.122Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773816610119-1b3j1ip",
+    "accountId": "acc-tamia",
+    "accountUsername": "tamia.buckner",
+    "videoFileName": "1773816610099-single_life.mp4",
+    "caption": "pov single life is best at home ... 🥴🌹",
+    "status": "failed",
+    "timestamp": "2026-03-18T06:50:10.119Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773781260341-il80jsf",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773781260322-single_life.mp4",
+    "caption": "pov single life",
+    "status": "failed",
+    "timestamp": "2026-03-17T21:01:00.341Z",
+    "error": "page.waitForTimeout: Target page, context or browser has been closed"
+  },
+  {
+    "id": "hist-1773780781286-tm7fuln",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773780781268-single_life.mp4",
+    "caption": "pov single life ... ",
+    "status": "success",
+    "timestamp": "2026-03-17T20:53:01.286Z"
+  },
+  {
+    "id": "hist-1773780604919-n0i1i00",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773780604903-single_life.mp4",
+    "caption": "pov single life",
+    "status": "success",
+    "timestamp": "2026-03-17T20:50:04.919Z"
+  },
+  {
+    "id": "hist-1773780407440-6xsb24t",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773780407425-single_life.mp4",
+    "caption": "pov single life",
+    "status": "success",
+    "timestamp": "2026-03-17T20:46:47.440Z"
+  },
+  {
+    "id": "hist-1773780294563-zkuwpc7",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773780294547-single_life.mp4",
+    "caption": "pov single life",
+    "status": "uploading",
+    "timestamp": "2026-03-17T20:44:54.563Z"
+  },
+  {
+    "id": "hist-1773780114105-1rbypva",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773780114089-single_life.mp4",
+    "caption": "pov single life ....",
+    "status": "uploading",
+    "timestamp": "2026-03-17T20:41:54.105Z"
+  },
+  {
+    "id": "hist-1773779915312-d9y4y9p",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773779915294-single_life.mp4",
+    "caption": "pov single life ...",
+    "status": "uploading",
+    "timestamp": "2026-03-17T20:38:35.312Z"
+  },
+  {
+    "id": "hist-1773779586454-jaxbdq4",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773779586437-single_life.mp4",
+    "caption": "pov the single life",
+    "status": "uploading",
+    "timestamp": "2026-03-17T20:33:06.454Z"
+  },
+  {
+    "id": "hist-1773779164738-jfjrf2d",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773779164720-single_life.mp4",
+    "caption": "this is the test post",
+    "status": "failed",
+    "timestamp": "2026-03-17T20:26:04.738Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773777207908-i5hkuvg",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773777207889-single_life.mp4",
+    "caption": "pov the single life 💖💖💗...",
+    "status": "success",
+    "timestamp": "2026-03-17T19:53:27.908Z"
+  },
+  {
+    "id": "hist-1773776769631-wpqxzot",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773776769612-single_life.mp4",
+    "caption": "pov the single life 💖💗",
+    "status": "failed",
+    "timestamp": "2026-03-17T19:46:09.631Z",
+    "error": "Post button not found. Try closing any popups manually."
+  },
+  {
+    "id": "hist-1773776269157-p4sqllz",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773776269134-single_life.mp4",
+    "caption": "pov single life",
+    "status": "failed",
+    "timestamp": "2026-03-17T19:37:49.157Z",
+    "error": "locator.waitFor: Timeout 60000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('input[type=\"file\"]')\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773775931758-5wd2oke",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773775931734-single_life.mp4",
+    "caption": "pov single life 🥴....",
+    "status": "failed",
+    "timestamp": "2026-03-17T19:32:11.758Z",
+    "error": "page.goto: Timeout 60000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://www.tiktok.com/tiktokstudio/upload?lang=en\", waiting until \"domcontentloaded\"\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773774492717-kv1lm2f",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773774492699-single_life.mp4",
+    "caption": "pov single life .....💓💓",
+    "status": "uploading",
+    "timestamp": "2026-03-17T19:08:12.717Z"
+  },
+  {
+    "id": "hist-1773774124361-8eu5vn2",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773774124340-single_life.mp4",
+    "caption": "pov single life",
+    "status": "failed",
+    "timestamp": "2026-03-17T19:02:04.361Z",
+    "error": "Post button not found"
+  },
+  {
+    "id": "hist-1773773889684-ygv7lv1",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773773889656-single_life.mp4",
+    "caption": "pov the single life .....",
+    "status": "failed",
+    "timestamp": "2026-03-17T18:58:09.685Z",
+    "error": "page.goto: Timeout 60000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://www.tiktok.com/tiktokstudio/upload?lang=en\", waiting until \"networkidle\"\u001b[22m\n"
+  },
+  {
+    "id": "hist-1773772642604-1cvg79i",
+    "accountId": "acc-erin-williams",
+    "accountUsername": "erin.williams959",
+    "videoFileName": "1773772642572-single_life.mp4",
+    "caption": "pov single life be like",
+    "status": "failed",
+    "timestamp": "2026-03-17T18:37:22.604Z",
+    "error": "locator.setInputFiles: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('input[type=\"file\"]').first()\u001b[22m\n\u001b[2m    - waiting for\" https://www.tiktok.com/tiktokstudio/upload?lang=en\" navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://www.tiktok.com/tiktokstudio/upload?lang=en\"\u001b[22m\n"
+  }
+]

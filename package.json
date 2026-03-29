@@ -6,21 +6,42 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "queue:worker": "tsx workers/uploadWorker.ts",
+    "queue:worker:single": "UPLOAD_WORKER_CONCURRENCY=1 tsx workers/uploadWorker.ts",
+    "queue:worker:mongo": "UPLOAD_WORKER_CONCURRENCY=2 tsx workers/mongoUploadWorker.ts",
+    "queue:worker:mongo:single": "UPLOAD_WORKER_CONCURRENCY=1 tsx workers/mongoUploadWorker.ts",
+    "import-sessions": "node --env-file=.env scripts/import-local-sessions-to-mongo.mjs",
+    "import-sessions:dry": "node --env-file=.env scripts/import-local-sessions-to-mongo.mjs --dry-run",
+    "create-session": "tsx scripts/createSession.ts",
+    "postinstall": "playwright install chromium"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.71.1",
+    "busboy": "^1.6.0",
+    "ioredis": "^5.10.1",
+    "jose": "^6.2.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.2.4",
     "next": "16.1.6",
+    "nodemailer": "^8.0.3",
+    "playwright": "^1.49.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/busboy": "^1.5.4",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
