@@ -1,4 +1,5 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
+import { isTikTokSessionLoggedOut } from "@/lib/tiktokSessionHealth";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -1476,6 +1477,17 @@ export async function runUploadWithSession(
     await page.goto(TIKTOK_UPLOAD_URL, { waitUntil: "commit", timeout: 90000 });
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     ctx.flow("navigation committed + domcontentloaded (best-effort)");
+
+    if (await isTikTokSessionLoggedOut(page)) {
+      await ctx.shot(page, "session-expired-or-logged-out.png");
+      return {
+        success: false,
+        error:
+          "SESSION_EXPIRED: TikTok session missing or expired. Re-import storageState JSON on Accounts (local capture or browser export).",
+        soundUsed: undefined,
+      };
+    }
+
     ctx.flow("human: pause + scroll after load");
     await humanPause(page);
     await humanScroll(page);

@@ -16,6 +16,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "username and session are required" }, { status: 400 });
   }
 
+  try {
+    const parsed = JSON.parse(session) as { cookies?: unknown };
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.cookies)) {
+      return NextResponse.json(
+        { error: "session must be valid Playwright storageState JSON (object with a cookies array)" },
+        { status: 400 }
+      );
+    }
+  } catch {
+    return NextResponse.json({ error: "session must be valid JSON (Playwright storageState export)" }, { status: 400 });
+  }
+
   await connectDB();
   const ownerId = (user as { _id: unknown })._id;
   const account = await AccountModel.findOneAndUpdate(

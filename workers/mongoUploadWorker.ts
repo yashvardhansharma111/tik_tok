@@ -8,6 +8,7 @@ import { AccountModel } from "../lib/models/Account";
 import { UploadModel } from "../lib/models/Upload";
 import { claimUploadBatch } from "../lib/mongoUploadClaim";
 import { runUploadWithSession } from "../automation/uploadWorker";
+import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 
 type PlaywrightProxyConfig = {
   server: string;
@@ -162,10 +163,13 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
       console.log("[MongoWorker] job success", { uploadId, accountId, username: lockedAccount.username });
     } else {
       const errorMsg = result.error || "Upload failed";
+      await markAccountExpiredIfSessionError(accountId, errorMsg);
+
       const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 1));
       const retryDelayMs = Number(process.env.UPLOAD_RETRY_DELAY_MS || 15000);
+      const shouldRetry = !isSessionExpiredError(errorMsg) && attemptNumber < maxAttempts;
 
-      if (attemptNumber < maxAttempts) {
+      if (shouldRetry) {
         await UploadModel.updateOne(
           { _id: uploadObjectId },
           {
@@ -185,7 +189,7 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
         accountId,
         username: lockedAccount.username,
         attemptNumber,
-        willRetry: attemptNumber < maxAttempts,
+        willRetry: shouldRetry,
         error: errorMsg,
       });
     }

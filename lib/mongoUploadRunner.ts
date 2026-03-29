@@ -10,6 +10,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { claimUploadBatch } from "@/lib/mongoUploadClaim";
 import { runUploadWithSession } from "@/automation/uploadWorker";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
+import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
 
 /** Single runner + abort handle survives Next.js HMR better than module-local flags alone. */
 const RUNNER_SINGLETON_KEY = "__mongoUploadRunnerSingleton_v1";
@@ -157,9 +158,12 @@ async function processUpload(upload: any, browser: Browser) {
     }
 
     const errorMsg = result.error || "Upload failed";
-    const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 1));
+    await markAccountExpiredIfSessionError(accountId, errorMsg);
 
-    if (attemptNumber < maxAttempts) {
+    const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 1));
+    const shouldRetry = !isSessionExpiredError(errorMsg) && attemptNumber < maxAttempts;
+
+    if (shouldRetry) {
       const retryDelayMs = Number(process.env.UPLOAD_RETRY_DELAY_MS || 15000);
       await UploadModel.updateOne(
         { _id: uploadObjectId },
@@ -183,7 +187,7 @@ async function processUpload(upload: any, browser: Browser) {
       accountId,
       username: lockedAccount.username,
       attemptNumber,
-      willRetry: attemptNumber < maxAttempts,
+      willRetry: shouldRetry,
       error: errorMsg,
     });
   } finally {

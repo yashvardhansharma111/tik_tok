@@ -7,6 +7,7 @@ import { AccountModel } from "../lib/models/Account";
 import { UploadModel } from "../lib/models/Upload";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { launchChromium } from "../lib/playwrightLaunch";
+import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 import mongoose from "mongoose";
 
 let browserInstance: import("playwright").Browser | null = null;
@@ -163,8 +164,11 @@ async function processUpload(job: Job<UploadJobPayload>) {
     }
 
     const errorMsg = result.error || "Upload failed";
+    await markAccountExpiredIfSessionError(accountId, errorMsg);
 
-    if (shouldRetryAfterThis) {
+    const retryThis = shouldRetryAfterThis && !isSessionExpiredError(errorMsg);
+
+    if (retryThis) {
       await UploadModel.updateOne(
         { _id: uploadDoc._id },
         { $set: { status: "pending", error: undefined } }

@@ -6,9 +6,28 @@ import { captureTikTokStorageState } from "@/automation/captureTikTokSession";
 
 export const maxDuration = 300;
 
+function parseTruthy(v: string | undefined): boolean {
+  if (v === undefined || v === "") return false;
+  const s = v.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(s);
+}
+
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const allowInteractiveCapture =
+    process.env.NODE_ENV !== "production" || parseTruthy(process.env.ALLOW_INTERACTIVE_SESSION_CAPTURE);
+  if (!allowInteractiveCapture) {
+    return NextResponse.json(
+      {
+        error:
+          "Interactive session capture is disabled in production. Run capture on your local PC (npm run dev), or paste TikTok storageState JSON below Accounts → Import session.",
+        code: "CAPTURE_DISABLED_PRODUCTION",
+      },
+      { status: 403 }
+    );
+  }
 
   const body = await request.json().catch(() => ({}));
   const username = typeof body.username === "string" ? body.username.trim() : "";

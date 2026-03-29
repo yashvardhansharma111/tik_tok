@@ -155,7 +155,7 @@ export default function RenamePage() {
         <div className="mt-3 space-y-2">
           {accounts.length === 0 ? (
             <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-600">
-              No accounts yet. Add one under Accounts using session capture.
+              No accounts yet. Add one under Accounts (import JSON or local capture).
             </p>
           ) : (
             accounts.map((a) => {
