@@ -16,6 +16,11 @@ import { chromium, type Browser, type LaunchOptions } from "playwright";
  * - PLAYWRIGHT_CHANNEL — e.g. `chrome` to use installed Chrome instead of bundled Chromium.
  * - PLAYWRIGHT_CHROMIUM_ARGS — space-separated extra flags (appended after defaults).
  * - PLAYWRIGHT_DOCKER — set `true` to always add --no-sandbox etc. (even on non-Linux).
+ * - PLAYWRIGHT_USE_HEADLESS_SHELL — set `true` to use Playwright’s smaller `chromium-headless-shell` binary
+ *   (default is **false**: we use full Chromium + `--headless`, which is more reliable in Docker/Linux production).
+ *
+ * Production Linux/Docker: install OS deps once — `npx playwright install-deps chromium` (or use a base image
+ * that includes Chromium’s shared libraries). Set PLAYWRIGHT_DOCKER=true.
  *
  * Linux server without monitor: run the app under Xvfb so headed mode still works for TikTok:
  *   sudo apt install xvfb && xvfb-run -a npm run start
@@ -70,7 +75,18 @@ function resolveHeadless(): boolean {
 export function getChromiumLaunchOptions(_purpose?: PlaywrightPurpose): LaunchOptions {
   const headless = resolveHeadless();
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined;
-  const channel = process.env.PLAYWRIGHT_CHANNEL?.trim() as LaunchOptions["channel"] | undefined;
+  const envChannel = process.env.PLAYWRIGHT_CHANNEL?.trim() as LaunchOptions["channel"] | undefined;
+  /**
+   * Playwright 1.49+ uses a separate `chromium-headless-shell` build when headless=true and channel is unset.
+   * That binary often crashes immediately in minimal containers (`Target page, context or browser has been closed`).
+   * Using channel `chromium` selects the full bundled Chromium and passes `--headless` instead — same as Playwright’s
+   * “new headless” / full-browser path and far more compatible on Linux production.
+   */
+  const useShell =
+    parseTruthy(process.env.PLAYWRIGHT_USE_HEADLESS_SHELL) === true;
+  const channel: LaunchOptions["channel"] | undefined =
+    envChannel ??
+    (headless && !executablePath && !useShell ? ("chromium" as const) : undefined);
 
   const linuxish = useLinuxStyleSandboxArgs();
   const opts: LaunchOptions = {
