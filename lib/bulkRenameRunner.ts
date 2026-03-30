@@ -8,6 +8,29 @@ import { randomUsernameSuffix, sanitizeTikTokUsername } from "@/lib/tiktokUserna
 import { renameLog } from "@/lib/renameDebugLog";
 import mongoose from "mongoose";
 
+function extractExampleUsernamesFromPrompt(prompt: string): string[] {
+  const raw = (prompt || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of raw) {
+    const token = line
+      .replace(/^@/, "")
+      .replace(/[^a-zA-Z0-9_]/g, "")
+      .trim();
+    const s = sanitizeTikTokUsername(token);
+    if (!s || s.length < 4) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
 function uniquifyUsernames(names: string[]): string[] {
   const used = new Set<string>();
   const out: string[] = [];
@@ -56,6 +79,15 @@ function forceDistinctFromCurrentHandles(names: string[], currentHandles: string
 
 async function groqGenerateTikTokUsernames(prompt: string, labels: string[]): Promise<string[]> {
   const n = labels.length;
+
+  const promptExamples = extractExampleUsernamesFromPrompt(prompt);
+  if (promptExamples.length >= n) {
+    renameLog("prompt_examples_used", { count: promptExamples.length, using: n, examples: promptExamples.slice(0, n) });
+    const raw = promptExamples.slice(0, n).map((s) => sanitizeTikTokUsername(s));
+    const distinct = forceDistinctFromCurrentHandles(raw, labels);
+    return uniquifyUsernames(distinct);
+  }
+
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) throw new Error("Missing GROQ_API_KEY");
 
@@ -69,10 +101,13 @@ Hard rules:
 - All ${n} strings must be unique (case-insensitive).
 - CRITICAL: Do NOT output any string that equals (case-insensitive) any of these FORBIDDEN handles: ${forbiddenList}
   Those are the accounts' CURRENT @names. Repeating them would mean "no change" — always invent DIFFERENT handles.
-- Follow the user's THEME (bands, aesthetics, jokes) but create new words — e.g. theme "Jared Leto" → new handles like "marsfan_vibes", "thirtysecfan", NOT the same as any forbidden handle above.`;
+- Follow the user's THEME (bands, aesthetics, jokes) but create new words — e.g. theme "Jared Leto" → new handles like "marsfan_vibes", "thirtysecfan", NOT the same as any forbidden handle above.
+- If the user supplied example handles, use them as STYLE anchors (same vibe/pattern), but do not copy them exactly unless they are explicitly intended outputs.`;
 
   const user = `THEME / style instructions (this is what the new names should feel like — examples in the theme are inspiration only, not strings to copy):
 ${prompt}
+
+EXAMPLE handles (STYLE ONLY): ${JSON.stringify(promptExamples.slice(0, 12))}
 
 FORBIDDEN outputs (current login handles — never put these in your JSON): ${JSON.stringify(labels)}
 
@@ -106,10 +141,25 @@ Return a JSON array of exactly ${n} brand-new candidate usernames, position i fo
   const end = text.lastIndexOf("]");
   if (start === -1 || end === -1) throw new Error("Groq did not return a JSON array");
   const arr = JSON.parse(text.slice(start, end + 1));
-  if (!Array.isArray(arr) || arr.length !== n) {
-    throw new Error(`Expected ${n} usernames, got ${Array.isArray(arr) ? arr.length : 0}`);
+  if (!Array.isArray(arr)) {
+    throw new Error("Groq did not return a JSON array");
   }
-  const raw = arr.map((s: unknown) => sanitizeTikTokUsername(String(s)));
+
+  const sliced = arr.length > n ? arr.slice(0, n) : arr;
+  const padded = [...sliced];
+  while (padded.length < n) {
+    padded.push(sanitizeTikTokUsername(`user_${randomUsernameSuffix()}${padded.length}`));
+  }
+
+  if (arr.length !== n) {
+    renameLog("groq_username_count_mismatch", {
+      expected: n,
+      got: arr.length,
+      using: padded.length,
+    });
+  }
+
+  const raw = padded.map((s: unknown) => sanitizeTikTokUsername(String(s)));
   const distinct = forceDistinctFromCurrentHandles(raw, labels);
   const out = uniquifyUsernames(distinct);
   renameLog("groq_usernames_ready", {
@@ -234,11 +284,10 @@ async function runBulkRenameJob(jobId: string) {
           candidate,
           ok: r.ok,
           verified: r.verified,
-          taken: r.taken,
           error: r.error,
         });
 
-        if (r.ok && r.verified !== false) {
+        if (r.ok && r.verified) {
           const persist = await saveAccountUsername(item.accountId, candidate);
           renameLog("mongo_persist", {
             candidate,
@@ -261,12 +310,12 @@ async function runBulkRenameJob(jobId: string) {
             renameLog("item_done", { appliedUsername: candidate });
             break;
           }
-          lastError = persist.error + " (TikTok may have updated; reconcile manually)";
+          lastError = persist.error;
           break;
         }
 
-        lastError = r.error || "Rename failed";
-        if (r.taken) {
+        lastError = r.error || "TikTok UI did not respond after save";
+        if (lastError === "Username not available") {
           renameLog("retry_new_candidate_taken", { previous: candidate });
           candidate = sanitizeTikTokUsername(`${names[idx] || item.username}_${randomUsernameSuffix()}${attempt + 1}`);
           continue;

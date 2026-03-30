@@ -13,6 +13,7 @@
     "queue:worker:mongo:single": "UPLOAD_WORKER_CONCURRENCY=1 tsx workers/mongoUploadWorker.ts",
     "import-sessions": "node --env-file=.env scripts/import-local-sessions-to-mongo.mjs",
     "import-sessions:dry": "node --env-file=.env scripts/import-local-sessions-to-mongo.mjs --dry-run",
+    "export:groq-renames": "node --env-file=.env scripts/export-groq-renames-not-in-ui.mjs",
     "create-session": "tsx scripts/createSession.ts",
     "postinstall": "playwright install chromium"
   },

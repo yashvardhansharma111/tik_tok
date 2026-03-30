@@ -12,7 +12,9 @@ export async function claimUploadBatch(limit: number): Promise<any[]> {
     $or: [{ nextRetryAt: null }, { nextRetryAt: { $lte: now } }],
   };
 
-  const first = await UploadModel.findOne(baseMatch).sort({ timestamp: 1 }).lean();
+  // Prefer the newest batch so a user-triggered upload runs immediately.
+  // Older pending jobs can exist if a previous run crashed or tmp files were cleaned.
+  const first = await UploadModel.findOne(baseMatch).sort({ timestamp: -1 }).lean();
   if (!first) return [];
 
   const targetUploadId = first.uploadId;
@@ -29,7 +31,7 @@ export async function claimUploadBatch(limit: number): Promise<any[]> {
       {
         $set: { status: "uploading", error: undefined, nextRetryAt: null },
       },
-      { sort: { timestamp: 1 }, returnDocument: "after" }
+      { sort: { timestamp: -1 }, returnDocument: "after" }
     ).lean();
 
     if (!job) break;

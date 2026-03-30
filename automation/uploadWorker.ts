@@ -48,8 +48,22 @@ export const TIKTOK_MUSIC_FLOW_SELECTORS = {
 
 /** Min score to accept a match on the user's primary search (else try region fallbacks). */
 const MUSIC_PRIMARY_MIN_SCORE = 12;
+const MUSIC_QUICK_ADD_MIN_SCORE = 18;
+const MUSIC_SUGGESTION_CLICK_MIN_SCORE = 18;
 
 const REGION_FALLBACK_SEARCHES = ["trending", "viral sound"] as const;
+
+const FALLBACK_SOUND_KEYWORDS = [
+  "viral",
+  "trending",
+  "trending sound",
+  "popular",
+  "fyp",
+  "viral sound",
+  "trend",
+  "tiktok viral",
+  "popular music",
+];
 
 /** Row labels we never select (TikTok junk / rights / unavailable). */
 export function isBadSoundLabel(text: string): boolean {
@@ -77,6 +91,100 @@ function withSoundFlowTimeout<T>(ms: number, fn: (signal: AbortSignal) => Promis
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const v = value.trim().replace(/\s+/g, " ");
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
+}
+
+function normalizeMusicText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isLowQualitySuggestion(text: string): boolean {
+  return /\b(lyrics?|lyric video|cover|edit|sped up|slowed|instrumental|karaoke|8d|reverb|remix)\b/i.test(text);
+}
+
+function scoreSuggestionCandidate(musicQuery: string, suggestionText: string): number {
+  let score = scoreSoundMatch(musicQuery, suggestionText);
+  const normalizedQuery = normalizeMusicText(musicQuery);
+  const normalizedSuggestion = normalizeMusicText(suggestionText);
+
+  if (normalizedSuggestion === normalizedQuery) score += 140;
+  else if (normalizedSuggestion.startsWith(normalizedQuery)) score += 60;
+  else if (normalizedSuggestion.includes(normalizedQuery)) score += 40;
+
+  if (isLowQualitySuggestion(suggestionText)) score -= 45;
+  if (/\b(video|live|harry potter|dragon age|letra)\b/i.test(suggestionText)) score -= 25;
+
+  return score;
+}
+
+function isClosedTargetError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /Target page, context or browser has been closed|has been closed/i.test(msg);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("SOUND_FLOW_TIMEOUT");
+}
+
+function suggestionContainsDesiredMusic(musicQuery: string, suggestionText: string): boolean {
+  const query = normalizeMusicText(musicQuery);
+  const suggestion = normalizeMusicText(suggestionText);
+  if (!query || !suggestion) return false;
+
+  if (suggestion.includes(query)) return true;
+
+  const queryTokens = tokenizeForSoundMatch(query).filter((t) => t.length >= 3);
+  const suggestionTokens = tokenizeForSoundMatch(suggestion);
+  if (queryTokens.length === 0 || suggestionTokens.length === 0) return false;
+
+  const overlap = queryTokens.filter((qt) => suggestionTokens.some((st) => st.includes(qt) || qt.includes(st))).length;
+  const minNeeded = Math.max(2, Math.ceil(queryTokens.length * 0.6));
+  return overlap >= minNeeded;
+}
+
+function buildMusicSearchTerms(musicQuery: string): string[] {
+  const q = musicQuery.trim().replace(/\s+/g, " ");
+  if (!q) return [];
+
+  const cleaned = q
+    .replace(/\((feat|ft|featuring)[^)]+\)/gi, " ")
+    .replace(/\[(official|audio|video|lyrics?)[^\]]*\]/gi, " ")
+    .replace(/\b(official|audio|video|lyrics?|feat\.?|ft\.?|featuring)\b/gi, " ")
+    .replace(/[|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const splitParts = cleaned
+    .split(/\s+[-–—:]\s+|\s+\|\s+|\s+by\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const tokens = tokenizeForSoundMatch(cleaned);
+  const firstFour = tokens.slice(0, 4).join(" ");
+  const lastFour = tokens.slice(-4).join(" ");
+
+  return uniqueNonEmpty([
+    q,
+    cleaned,
+    ...splitParts,
+    splitParts.length >= 2 ? `${splitParts[0]} ${splitParts[1]}` : "",
+    firstFour,
+    lastFour,
+    ...REGION_FALLBACK_SEARCHES,
+  ]);
 }
 
 /** Substrings / labels to locate sound-related controls (detection only — not clicked). */
@@ -116,11 +224,24 @@ function createFlowContext(username: string): FlowContext {
   const safe = username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
   const runId = `${Date.now()}-${safe}`;
   const debugDir = path.join(process.cwd(), "storage", "debug", runId);
+  const flowLogFile = path.join(debugDir, "flow.log");
   fs.mkdirSync(debugDir, { recursive: true });
 
-  const flow = (step: string) => console.log(`[FLOW] ${step}`);
+  const appendLog = (line: string) => {
+    try {
+      fs.appendFileSync(flowLogFile, `${new Date().toISOString()} ${line}\n`, "utf-8");
+    } catch {}
+  };
+
+  const flow = (step: string) => {
+    const line = `[FLOW] ${step}`;
+    console.log(line);
+    appendLog(line);
+  };
   const debug = (msg: string) => {
-    if (flowDebugOn()) console.log(`[DEBUG] ${msg}`);
+    const line = `[DEBUG] ${msg}`;
+    if (flowDebugOn()) console.log(line);
+    appendLog(line);
   };
 
   const shot = async (page: Page, fileName: string) => {
@@ -286,7 +407,7 @@ async function logUploadProgressHints(page: Page, ctx: FlowContext): Promise<voi
 }
 
 async function musicDebugShot(ctx: FlowContext, page: Page, fileName: string): Promise<void> {
-  if (flowDebugOn()) await ctx.shot(page, fileName);
+  await ctx.shot(page, fileName);
 }
 
 /**
@@ -760,9 +881,15 @@ async function coerceListPanelToSearch(
   return panel;
 }
 
-async function waitForSoundResultsInRoot(page: Page, panelRoot: PwLocator, timeoutMs: number): Promise<void> {
+async function waitForSoundResultsInRoot(
+  page: Page,
+  panelRoot: PwLocator,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     const e2e = panelRoot.locator('[data-e2e*="sound"]');
     if ((await e2e.count()) > 0 && (await e2e.first().isVisible().catch(() => false))) return;
     const opt = panelRoot.getByRole("option").first();
@@ -772,6 +899,281 @@ async function waitForSoundResultsInRoot(page: Page, panelRoot: PwLocator, timeo
     await page.waitForTimeout(350);
   }
   throw new Error("Sound results not visible in time");
+}
+
+async function panelShowsNoResults(panelRoot: PwLocator): Promise<boolean> {
+  const noResults = panelRoot
+    .locator("text=/no results|no sounds found|no songs found|couldn't find|not available/i")
+    .first();
+  return noResults.isVisible().catch(() => false);
+}
+
+async function isNoSoundResults(panelRoot: PwLocator): Promise<boolean> {
+  if (await panelShowsNoResults(panelRoot)) return true;
+  const raw = await harvestSoundCandidates(panelRoot).catch(() => [] as { loc: PwLocator; text: string }[]);
+  return raw.length === 0;
+}
+
+async function panelHasVisibleSoundResults(panelRoot: PwLocator): Promise<boolean> {
+  const e2e = panelRoot.locator('[data-e2e*="sound"]').first();
+  if (await e2e.isVisible().catch(() => false)) return true;
+  const opt = panelRoot.getByRole("option").first();
+  if (await opt.isVisible().catch(() => false)) return true;
+  const row = panelRoot.locator('[role="listbox"] button, [role="grid"] button').first();
+  return row.isVisible().catch(() => false);
+}
+
+function isStaticSuggestionTab(text: string): boolean {
+  return /^(favorites|unlimited|for you|recommended|trending)$/i.test(text.trim());
+}
+
+async function resolveSuggestionRoots(searchInput: PwLocator, panelRoot: PwLocator): Promise<PwLocator[]> {
+  const roots: PwLocator[] = [];
+  const candidates = [
+    searchInput.page().locator('.Dropdown__content:visible .MusicPanelSugList__wrap').last(),
+    searchInput.page().locator('.Dropdown__content:visible').last(),
+    searchInput.page().locator('.MusicPanelSugList__wrap:visible').last(),
+    searchInput.locator(
+      'xpath=ancestor::*[self::div or self::section][1]/following-sibling::*[1]'
+    ).first(),
+    searchInput.locator(
+      'xpath=ancestor::*[self::div or self::section][2]/following-sibling::*[1]'
+    ).first(),
+    searchInput.locator(
+      'xpath=ancestor::*[self::div or self::section][1]/parent::*'
+    ).first(),
+    panelRoot.locator('[role="listbox"]').first(),
+    panelRoot.locator('ul, [class*="suggest" i], [class*="auto" i], [class*="dropdown" i]').first(),
+    panelRoot,
+  ];
+
+  for (const root of candidates) {
+    if (!(await root.isVisible().catch(() => false))) continue;
+    roots.push(root);
+  }
+
+  return roots;
+}
+
+async function harvestSearchSuggestions(
+  searchInput: PwLocator,
+  panelRoot: PwLocator
+): Promise<{ loc: PwLocator; text: string }[]> {
+  const out: { loc: PwLocator; text: string }[] = [];
+  const seen = new Set<string>();
+
+  const tryHarvest = async (rows: PwLocator) => {
+    const n = await rows.count();
+    for (let i = 0; i < Math.min(n, 20); i++) {
+      const el = rows.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      const text = (await el.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      const line = text.split("\n")[0]?.trim() || text;
+      if (line.length < 4 || line.length > 120) continue;
+      if (ROW_SKIP_LABEL.test(line)) continue;
+      if (isBadSoundLabel(line)) continue;
+      if (isStaticSuggestionTab(line)) continue;
+      const role = ((await el.getAttribute("role").catch(() => null)) || "").trim().toLowerCase();
+      if (role === "tab") continue;
+      const ariaSelected = ((await el.getAttribute("aria-selected").catch(() => null)) || "").trim().toLowerCase();
+      if (ariaSelected === "true" && isStaticSuggestionTab(line)) continue;
+      const key = normalizeMusicText(line);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ loc: el, text: line });
+      if (out.length >= 8) return;
+    }
+  };
+
+  const roots = await resolveSuggestionRoots(searchInput, panelRoot);
+  for (const root of roots) {
+    await tryHarvest(root.locator('.MusicPanelSugList__item'));
+    if (out.length >= 5) break;
+    await tryHarvest(root.locator('[role="option"]'));
+    if (out.length >= 5) break;
+    await tryHarvest(
+      root.locator(
+        'li, a, button, [role="button"], [data-e2e*="search" i], [class*="suggest" i] > *'
+      )
+    );
+    if (out.length >= 5) break;
+  }
+  return out.slice(0, 8);
+}
+
+async function clickSuggestionFromDom(
+  page: Page,
+  musicQuery: string,
+  typedSoFar: string,
+  ctx: FlowContext
+): Promise<boolean> {
+  const normalizedQuery = normalizeMusicText(musicQuery);
+  const typed = normalizeMusicText(typedSoFar);
+
+  const domSuggestions = await page
+    .evaluate(({ query, typedValue }) => {
+      const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+      const isVisible = (el: Element) => {
+        const node = el as HTMLElement;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+
+      const nodes = Array.from(document.querySelectorAll(".Dropdown__content .MusicPanelSugList__item"));
+      const visibleNodes = nodes.filter((el) => isVisible(el));
+      const rows = visibleNodes
+        .map((el, index) => ({
+          index,
+          text: normalize((el.textContent || "").replace(/\s+/g, " ")),
+        }))
+        .filter((row) => row.text.length > 0);
+
+      const lowQuality = (text: string) =>
+        /\b(lyrics?|lyric video|cover|edit|sped up|slowed|instrumental|karaoke|8d|reverb|remix|video|live|letra)\b/i.test(text);
+
+      const scored = rows
+        .map((row) => {
+          let score = 0;
+          if (row.text === query) score += 300;
+          else if (row.text.startsWith(query)) score += 180;
+          else if (row.text.includes(query)) score += 120;
+          if (typedValue && row.text.includes(typedValue)) score += 40;
+          if (lowQuality(row.text)) score -= 60;
+          return { ...row, score };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      const best = scored[0];
+      if (!best || best.score < 80) {
+        return {
+          clicked: false,
+          suggestions: scored.slice(0, 5).map((s) => s.text),
+        };
+      }
+
+      const target = visibleNodes[best.index] as HTMLElement | undefined;
+      if (!target) {
+        return {
+          clicked: false,
+          suggestions: scored.slice(0, 5).map((s) => s.text),
+        };
+      }
+
+      target.click();
+      return {
+        clicked: true,
+        text: best.text,
+        suggestions: scored.slice(0, 5).map((s) => s.text),
+      };
+    }, { query: normalizedQuery, typedValue: typed })
+    .catch(() => ({ clicked: false as const, suggestions: [] as string[] }));
+
+  if (!domSuggestions.clicked) {
+    if (domSuggestions.suggestions.length === 0) {
+      ctx.flow(`[music] suggestions: none visible for "${typedSoFar.slice(0, 40)}"`);
+    } else {
+      ctx.flow(
+        `[music] dom suggestions: ${domSuggestions.suggestions
+          .slice(0, 3)
+          .map((s) => `"${s.slice(0, 40)}"`)
+          .join(" · ")}`
+      );
+    }
+    return false;
+  }
+
+  ctx.flow(`[music] suggestion clicked via DOM: "${(domSuggestions.text || "").slice(0, 80)}"`);
+  await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
+  await page.waitForTimeout(humanRand(700, 1200));
+  return true;
+}
+
+async function tryClickMatchingSuggestion(
+  page: Page,
+  searchInput: PwLocator,
+  panelRoot: PwLocator,
+  musicQuery: string,
+  typedSoFar: string,
+  ctx: FlowContext
+): Promise<boolean> {
+  const domClicked = await clickSuggestionFromDom(page, musicQuery, typedSoFar, ctx);
+  if (domClicked) return true;
+
+  const suggestions = await harvestSearchSuggestions(searchInput, panelRoot);
+  if (suggestions.length === 0) {
+    ctx.flow(`[music] suggestions: none visible for "${typedSoFar.slice(0, 40)}"`);
+    return false;
+  }
+
+  const typed = normalizeMusicText(typedSoFar);
+  const ranked = suggestions
+    .map((s) => ({ ...s, score: scoreSuggestionCandidate(musicQuery, s.text) }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  ctx.flow(
+    `[music] suggestions(raw): ${suggestions
+      .slice(0, 6)
+      .map((s) => `"${s.text.slice(0, 40)}"`)
+      .join(" · ")}`
+  );
+  ctx.flow(
+    `[music] suggestions: ${ranked
+      .slice(0, 3)
+      .map((s) => `${s.score.toFixed(0)}:"${s.text.slice(0, 40)}"`)
+      .join(" · ")}`
+  );
+
+  const bestNorm = normalizeMusicText(best.text);
+  const containsDesired = suggestionContainsDesiredMusic(musicQuery, best.text);
+  const variantPenalty = isLowQualitySuggestion(best.text);
+  const goodEnough =
+    typed.length >= Math.max(5, Math.floor(normalizeMusicText(musicQuery).length * 0.28)) &&
+    (
+      containsDesired ||
+      (
+        best.score >= MUSIC_SUGGESTION_CLICK_MIN_SCORE &&
+        !variantPenalty &&
+        (bestNorm.includes(typed) || bestNorm.startsWith(typed) || typed.includes(bestNorm))
+      )
+    );
+
+  if (!goodEnough) {
+    ctx.flow(
+      `[music] suggestion skipped: best="${best.text.slice(0, 80)}" containsDesired=${containsDesired} variantPenalty=${variantPenalty} typed="${typed.slice(0, 40)}"`
+    );
+    return false;
+  }
+
+  await page.waitForTimeout(humanRand(220, 520));
+let clickable = best.loc.locator(
+  'button, [role="button"]'
+).first();
+
+if (!(await clickable.count())) {
+  clickable = best.loc; // fallback
+}
+  await clickable.scrollIntoViewIfNeeded().catch(() => {});
+
+try {
+  await clickable.click({ force: true });
+} catch {
+  const box = await clickable.boundingBox().catch(() => null);
+  if (box) {
+    await page.mouse.click(
+      box.x + box.width / 2,
+      box.y + box.height / 2
+    ).catch(() => {});
+  }
+}
+
+  ctx.flow(`[music] suggestion clicked: "${best.text.slice(0, 80)}"`);
+  const afterClickValue = await searchInput.inputValue().catch(() => "");
+  ctx.flow(`[music] suggestion click -> input value now: "${(afterClickValue || "").slice(0, 80)}"`);
+  await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
+  await page.waitForTimeout(humanRand(700, 1200));
+  return true;
 }
 
 const ROW_SKIP_LABEL = /^(close|cancel|back)$/i;
@@ -792,8 +1194,18 @@ async function harvestSoundCandidates(panelRoot: PwLocator): Promise<{ loc: PwLo
       if (isBadSoundLabel(text)) continue;
       if (seen.has(text)) continue;
       seen.add(text);
-      out.push({ loc: el, text });
-      if (out.length >= 8) return;
+let clickable = el.locator(
+  'button, [role="button"], div[tabindex]'
+).first();
+
+if (!(await clickable.count())) {
+  clickable = el; // fallback to row itself
+}
+
+out.push({
+  loc: clickable,
+  text,
+});      if (out.length >= 8) return;
     }
   };
 
@@ -817,17 +1229,100 @@ function rankTopFiveScored(
     .slice(0, 5);
 }
 
-async function runSearchInPanel(page: Page, searchInput: PwLocator, term: string, ctx: FlowContext): Promise<void> {
+async function runSearchInPanel(
+  page: Page,
+  searchInput: PwLocator,
+  panelRoot: PwLocator,
+  term: string,
+  ctx: FlowContext,
+  signal?: AbortSignal
+): Promise<void> {
+  throwIfAborted(signal);
   await searchInput.click({ force: true }).catch(() => {});
-  await searchInput.fill("");
-  await searchInput.fill(term);
-  await searchInput.press("Enter");
-  await page.keyboard.press("Enter").catch(() => {});
+  const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+  await searchInput.press(selectAll).catch(() => {});
+  await searchInput.press("Backspace").catch(() => {});
+  await page.waitForTimeout(humanRand(180, 320));
+
+  const isLongOrIdLike = term.length >= 26 || /\d{8,}/.test(term) || (term.includes("-") && /\d/.test(term));
+  if (isLongOrIdLike) {
+    const short = term.length > 70 ? `${term.slice(0, 70)}…` : term;
+    ctx.flow(`[music] search (fast fill): "${short}"`);
+    await searchInput.fill(term).catch(async () => {
+      // Some Studio builds block fill(); fall back to typing quickly.
+      await searchInput.type(term, { delay: humanRand(5, 18) });
+    });
+    await page.waitForTimeout(humanRand(450, 850));
+    await searchInput.press("Enter").catch(() => {});
+    await page.keyboard.press("Enter").catch(() => {});
+    await page.waitForTimeout(humanRand(900, 1500));
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(humanRand(220, 420));
+    await page.keyboard.press("Escape").catch(() => {});
+    await panelRoot.click({ force: true }).catch(() => {});
+    return;
+  }
+
+  let typed = "";
+  const normalizedTarget = normalizeMusicText(term);
+  for (let i = 0; i < term.length; i++) {
+    throwIfAborted(signal);
+    const ch = term[i];
+    // TikTok suggestions/results can be flaky if we type too fast.
+    await searchInput.type(ch, { delay: humanRand(25, 70) });
+    typed += ch;
+    await page.waitForTimeout(humanRand(220, 420));
+
+    const trimmed = typed.trim();
+    if (trimmed.length < 6) continue;
+    const shouldProbe = /\s/.test(ch) || i === term.length - 1 || i % 4 === 3;
+    if (!shouldProbe) continue;
+
+    await page.waitForTimeout(humanRand(260, 520));
+    const clickedSuggestion = await tryClickMatchingSuggestion(page, searchInput, panelRoot, term, trimmed, ctx);
+    if (clickedSuggestion) {
+      // Submit to ensure results load and suggestion dropdown collapses.
+      await searchInput.press("Enter").catch(() => {});
+      await page.keyboard.press("Enter").catch(() => {});
+      ctx.flow("[music] search: pressed Enter after suggestion click");
+      await page.waitForTimeout(humanRand(650, 1100));
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(humanRand(220, 420));
+      await page.keyboard.press("Escape").catch(() => {});
+      await panelRoot.click({ force: true }).catch(() => {});
+      return;
+    }
+
+    const inputValue = normalizeMusicText(await searchInput.inputValue().catch(() => ""));
+    if (inputValue && inputValue === normalizedTarget && (await panelHasVisibleSoundResults(panelRoot))) {
+      ctx.flow("[music] exact query reached with visible results");
+      return;
+    }
+  }
+
   const short = term.length > 70 ? `${term.slice(0, 70)}…` : term;
   ctx.flow(`[music] search: "${short}"`);
   const typedValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] search input value now: "${(typedValue || "").slice(0, 80)}"`);
-  await page.waitForTimeout(450);
+  // Give TikTok a moment to populate results after the full query is present.
+  await page.waitForTimeout(humanRand(1600, 2600));
+  await page.waitForTimeout(humanRand(700, 1200));
+  // Always submit the query with Enter to collapse the suggestions dropdown.
+  await searchInput.press("Enter").catch(() => {});
+  await page.keyboard.press("Enter").catch(() => {});
+  ctx.flow("[music] search: pressed Enter");
+  await page.waitForTimeout(humanRand(650, 1100));
+
+  // If still no visible results and no explicit "no results" message, press Enter again.
+  if (!(await panelHasVisibleSoundResults(panelRoot)) && !(await panelShowsNoResults(panelRoot))) {
+    await searchInput.press("Enter").catch(() => {});
+    await page.keyboard.press("Enter").catch(() => {});
+    ctx.flow("[music] search: pressed Enter fallback");
+    await page.waitForTimeout(humanRand(900, 1500));
+  }
+
+  // Suggestions dropdown can overlay the results list (and Plus buttons) — dismiss it.
+  await page.keyboard.press("Escape").catch(() => {});
 }
 
 async function isSoundPickerUiOpen(page: Page): Promise<boolean> {
@@ -941,14 +1436,15 @@ async function trySelectCachedSound(
   page: Page,
   workingPanel: SoundPanelReady,
   cached: CachedSoundEntry,
-  ctx: FlowContext
+  ctx: FlowContext,
+  signal?: AbortSignal
 ): Promise<{ loc: PwLocator; text: string } | null> {
   if (workingPanel.mode !== "search") return null;
   const short = cached.label.length > 64 ? `${cached.label.slice(0, 64)}…` : cached.label;
   ctx.flow(`[music] cache hit — quick search: "${short}"`);
-  await runSearchInPanel(page, workingPanel.searchInput, cached.label, ctx);
+  await runSearchInPanel(page, workingPanel.searchInput, workingPanel.panelRoot, cached.label, ctx, signal);
   try {
-    await waitForSoundResultsInRoot(page, workingPanel.panelRoot, 12000);
+    await waitForSoundResultsInRoot(page, workingPanel.panelRoot, 12000, signal);
   } catch {
     return null;
   }
@@ -971,26 +1467,157 @@ async function pickBestSoundFromPanel(
   page: Page,
   workingPanel: SoundPanelReady,
   musicQuery: string,
-  ctx: FlowContext
+  ctx: FlowContext,
+  signal?: AbortSignal
 ): Promise<{ loc: PwLocator; text: string } | null> {
   const q = musicQuery.trim();
-  const searchTerms = [q, ...REGION_FALLBACK_SEARCHES.filter((t) => t.toLowerCase() !== q.toLowerCase())];
+  const searchTerms = buildMusicSearchTerms(q);
 
-  let wp = workingPanel;
+  const wp = workingPanel;
 
-  for (let si = 0; si < searchTerms.length; si++) {
-    const term = searchTerms[si];
+  const shuffledFallbackKeywords = (() => {
+    const arr = [...FALLBACK_SOUND_KEYWORDS];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  })();
+
+  const pickRelaxedFromPanel = async (): Promise<{ loc: PwLocator; text: string } | null> => {
+    const raw = await harvestSoundCandidates(wp.panelRoot);
+    for (const c of raw) {
+      throwIfAborted(signal);
+      const t = (c.text || "").replace(/\s+/g, " ").trim();
+      if (!t) continue;
+      if (/original\s+sound/i.test(t)) continue;
+      if (isBadSoundLabel(t)) continue;
+      const visible = await c.loc.isVisible().catch(() => false);
+      if (!visible) continue;
+      return { loc: c.loc, text: t };
+    }
+    return null;
+  };
+
+  let primaryFailed = false;
+  if (searchTerms.length > 0) {
+    throwIfAborted(signal);
+    const term = searchTerms[0];
     try {
       if (wp.mode === "search") {
-        await runSearchInPanel(page, wp.searchInput, term, ctx);
+        const currentValue = normalizeMusicText(await wp.searchInput.inputValue().catch(() => ""));
+        const desired = normalizeMusicText(term);
+        const alreadySearched =
+          currentValue && currentValue === desired && ((await panelHasVisibleSoundResults(wp.panelRoot)) || (await panelShowsNoResults(wp.panelRoot)));
+
+        if (!alreadySearched) {
+          await runSearchInPanel(page, wp.searchInput, wp.panelRoot, term, ctx, signal);
+          if (flowDebugOn()) await musicDebugShot(ctx, page, "step-music-search.png");
+          try {
+            await waitForSoundResultsInRoot(page, wp.panelRoot, 20000, signal);
+          } catch {
+            // continue; we may have a visible "No results" or rows that harvest can still find.
+          }
+        } else {
+          ctx.flow("[music] primary search already in input — skipping retype");
+        }
+      } else {
+        await waitForSoundResultsInRoot(page, wp.panelRoot, 16000, signal);
+      }
+
+      const noResults = await isNoSoundResults(wp.panelRoot);
+      const raw = await harvestSoundCandidates(wp.panelRoot);
+      if (noResults || raw.length === 0) {
+        ctx.flow("[music] primary search failed → switching to fallback");
+        primaryFailed = true;
+      } else {
+        const ranked = rankTopFiveScored(raw, q);
+        if (ranked.length === 0) {
+          ctx.flow("[music] primary search failed → switching to fallback");
+          primaryFailed = true;
+        } else {
+          ctx.flow(
+            `[music] top matches (scored vs user query): ${ranked
+              .map((r) => `${r.score.toFixed(0)}:"${r.text.slice(0, 36)}"`)
+              .join(" · ")}`
+          );
+          if (ranked[0].score >= MUSIC_PRIMARY_MIN_SCORE) {
+            console.log("[MUSIC] Selecting best match:", ranked[0].text.slice(0, 100));
+            return { loc: ranked[0].loc, text: ranked[0].text };
+          }
+          ctx.flow("[music] primary search failed → switching to fallback");
+          primaryFailed = true;
+        }
+      }
+    } catch (e) {
+      if (signal?.aborted || (e instanceof Error && e.message === "SOUND_FLOW_TIMEOUT")) {
+        return null;
+      }
+      if (isClosedTargetError(e)) {
+        ctx.flow("[music] search wave stopped: page/context closed");
+        return null;
+      }
+      ctx.flow(`[music] primary search error: ${e instanceof Error ? e.message : String(e)}`);
+      ctx.flow("[music] primary search failed → switching to fallback");
+      primaryFailed = true;
+    }
+  }
+
+  if (primaryFailed) {
+    if (wp.mode !== "search") {
+      const relaxed = await pickRelaxedFromPanel().catch(() => null);
+      if (relaxed) {
+        ctx.flow(`[music] fallback selected: ${relaxed.text}`);
+        return relaxed;
+      }
+      return null;
+    }
+
+    const attempts = shuffledFallbackKeywords.slice(0, 5);
+    for (const keyword of attempts) {
+      throwIfAborted(signal);
+      ctx.flow(`[music] trying fallback: ${keyword}`);
+      try {
+        await runSearchInPanel(page, wp.searchInput, wp.panelRoot, keyword, ctx, signal);
+        try {
+          await waitForSoundResultsInRoot(page, wp.panelRoot, 14000, signal);
+        } catch {
+          // proceed to harvest; UI may still render candidates without tripping our row visibility checks.
+        }
+        if (await isNoSoundResults(wp.panelRoot)) continue;
+        const relaxed = await pickRelaxedFromPanel().catch(() => null);
+        if (relaxed) {
+          ctx.flow(`[music] fallback selected: ${relaxed.text}`);
+          return relaxed;
+        }
+      } catch (e) {
+        if (signal?.aborted || (e instanceof Error && e.message === "SOUND_FLOW_TIMEOUT")) {
+          return null;
+        }
+        if (isClosedTargetError(e)) {
+          ctx.flow("[music] search wave stopped: page/context closed");
+          return null;
+        }
+        ctx.flow(`[music] fallback search error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  for (let si = 0; si < searchTerms.length; si++) {
+    throwIfAborted(signal);
+    const term = searchTerms[si];
+    try {
+      if (si === 0) continue;
+      if (wp.mode === "search") {
+        await runSearchInPanel(page, wp.searchInput, wp.panelRoot, term, ctx, signal);
         if (flowDebugOn() && si === 0) await musicDebugShot(ctx, page, "step-music-search.png");
-        await waitForSoundResultsInRoot(page, wp.panelRoot, 24000);
+        await waitForSoundResultsInRoot(page, wp.panelRoot, 24000, signal);
       } else {
         if (si > 0) {
           ctx.flow("[music] cannot run fallback search on pure list panel");
           break;
         }
-        await waitForSoundResultsInRoot(page, wp.panelRoot, 20000);
+        await waitForSoundResultsInRoot(page, wp.panelRoot, 20000, signal);
       }
 
       const raw = await harvestSoundCandidates(wp.panelRoot);
@@ -1020,6 +1647,10 @@ async function pickBestSoundFromPanel(
       console.log("[MUSIC] Selecting best after region fallback:", ranked[0].text.slice(0, 100));
       return { loc: ranked[0].loc, text: ranked[0].text };
     } catch (e) {
+      if (isClosedTargetError(e)) {
+        ctx.flow("[music] search wave stopped: page/context closed");
+        break;
+      }
       ctx.flow(`[music] search wave error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -1086,6 +1717,32 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
   return false;
 }
 
+async function clickPostConfirmDialogsIfPresent(page: Page, ctx: FlowContext, timeoutMs: number): Promise<boolean> {
+  const patterns = [/^continue$/i, /continue/i, /^post now$/i, /^post$/i, /post now/i, /^confirm$/i, /^done$/i, /done/i];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frontDialog = page.locator('[role="dialog"]:visible').last();
+    for (const re of patterns) {
+      const btnInDialog = frontDialog.getByRole("button", { name: re }).first();
+      if ((await btnInDialog.isVisible().catch(() => false)) && !(await btnInDialog.isDisabled().catch(() => true))) {
+        ctx.flow(`[post] confirm: clicking dialog button /${re.source}/i`);
+        await btnInDialog.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(1200);
+        return true;
+      }
+      const btnGlobal = page.getByRole("button", { name: re }).first();
+      if ((await btnGlobal.isVisible().catch(() => false)) && !(await btnGlobal.isDisabled().catch(() => true))) {
+        ctx.flow(`[post] confirm: clicking global button /${re.source}/i`);
+        await btnGlobal.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(1200);
+        return true;
+      }
+    }
+    await page.waitForTimeout(350);
+  }
+  return false;
+}
+
 /**
  * Fast path for current TikTok Studio sound UI:
  * search -> click first Plus button -> click Save.
@@ -1094,17 +1751,36 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
 async function tryQuickAddAndSaveAfterSearch(
   page: Page,
   panelRoot: PwLocator,
+  musicQuery: string,
   ctx: FlowContext,
   timeoutMs: number
 ): Promise<boolean> {
+  // TikTok often renders rows / Plus buttons a bit after the query is set.
+  await page.waitForTimeout(humanRand(900, 1700));
+  const raw = await harvestSoundCandidates(panelRoot);
+  const ranked = rankTopFiveScored(raw, musicQuery);
+  if (ranked.length === 0) {
+    ctx.flow("[music] quick add: no usable candidates");
+    return false;
+  }
+
+  const best = ranked[0];
+  ctx.flow(`[music] quick add candidate: ${best.score.toFixed(0)}:"${best.text.slice(0, 72)}"`);
+  if (best.score < MUSIC_QUICK_ADD_MIN_SCORE) {
+    ctx.flow(`[music] quick add skipped: weak match (${best.score.toFixed(0)} < ${MUSIC_QUICK_ADD_MIN_SCORE})`);
+    return false;
+  }
+
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const plusInPanel = panelRoot
-      .locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])')
+    const plusInPanel = best.loc
+      .locator(
+        'button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"]), xpath=ancestor-or-self::*[.//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]][1]//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]'
+      )
       .first();
     if ((await plusInPanel.isVisible().catch(() => false)) && !(await plusInPanel.isDisabled().catch(() => true))) {
       await plusInPanel.click({ force: true }).catch(() => {});
-      ctx.flow("[music] quick add: clicked first Plus in panel");
+      ctx.flow("[music] quick add: clicked Plus on best-matching row");
       await page.waitForTimeout(250);
 
       const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
@@ -1127,6 +1803,58 @@ async function tryQuickAddAndSaveAfterSearch(
 
   ctx.flow("[music] quick add: Plus/Save not found in time");
   return false;
+}
+
+async function tryQuickAddAndSaveRelaxedAfterSearch(
+  page: Page,
+  panelRoot: PwLocator,
+  ctx: FlowContext,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; pickedText?: string }> {
+  await page.waitForTimeout(humanRand(900, 1700));
+  await page.keyboard.press("Escape").catch(() => {});
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    throwIfAborted(signal);
+    const plusBtns = panelRoot.locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])');
+    const n = await plusBtns.count().catch(() => 0);
+    for (let i = 0; i < Math.min(n, 14); i++) {
+      const plus = plusBtns.nth(i);
+      const visible = await plus.isVisible().catch(() => false);
+      if (!visible) continue;
+      const disabled = await plus.isDisabled().catch(() => true);
+      if (disabled) continue;
+
+      const row = plus.locator(
+        'xpath=ancestor-or-self::*[self::li or self::tr or self::div][.//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]][1]'
+      );
+      const pickedText = ((await row.first().innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+
+      await plus.click({ force: true }).catch(() => {});
+      ctx.flow("[music] quick add relaxed: clicked Plus");
+      await page.waitForTimeout(250);
+
+      const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
+      if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
+        await saveInPanel.click({ force: true }).catch(() => {});
+        ctx.flow("[music] quick add relaxed: clicked Save in panel");
+        return { ok: true, pickedText: pickedText || undefined };
+      }
+
+      const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
+      if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
+        await saveGlobal.click({ force: true }).catch(() => {});
+        ctx.flow("[music] quick add relaxed: clicked Save globally");
+        return { ok: true, pickedText: pickedText || undefined };
+      }
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  ctx.flow("[music] quick add relaxed: Plus/Save not found in time");
+  return { ok: false };
 }
 
 async function executeOneSoundAttempt(
@@ -1161,12 +1889,31 @@ async function executeOneSoundAttempt(
     throw new Error("Sound panel not ready");
   }
 
-  let workingPanel = await coerceListPanelToSearch(page, panel, ctx);
+  const workingPanel = await coerceListPanelToSearch(page, panel, ctx);
 
   // Preferred fast path for the current UI shape user shared.
   if (workingPanel.mode === "search") {
-    await runSearchInPanel(page, workingPanel.searchInput, q, ctx);
-    const quickApplied = await tryQuickAddAndSaveAfterSearch(page, workingPanel.panelRoot, ctx, 12000);
+    await runSearchInPanel(page, workingPanel.searchInput, workingPanel.panelRoot, q, ctx, signal);
+
+    // Always try the relaxed Plus/Save path first for the primary query.
+    // This prevents premature fallback when results exist but scoring/rows are flaky.
+    const relaxedPrimary = await tryQuickAddAndSaveRelaxedAfterSearch(
+      page,
+      workingPanel.panelRoot,
+      ctx,
+      14000,
+      signal
+    );
+    if (relaxedPrimary.ok) {
+      const okRelaxedPrimary = await verifySoundAppliedStrict(page, q, ctx, relaxedPrimary.pickedText);
+      ctx.flow(`[music] primary selected: ${relaxedPrimary.pickedText || "(unknown)"}`);
+      if (okRelaxedPrimary) {
+        setCachedSound(accountUsername, q, relaxedPrimary.pickedText || q);
+        return { ok: true, soundLabel: relaxedPrimary.pickedText || q };
+      }
+    }
+
+    const quickApplied = await tryQuickAddAndSaveAfterSearch(page, workingPanel.panelRoot, q, ctx, 12000);
     if (quickApplied) {
       const okQuick = await verifySoundAppliedStrict(page, q, ctx);
       ctx.flow(`[music] quick add verify: ${okQuick ? "applied" : "not confirmed"}`);
@@ -1175,6 +1922,31 @@ async function executeOneSoundAttempt(
         return { ok: true, soundLabel: q };
       }
     }
+
+    const shuffledFallbackKeywords = (() => {
+      const arr = [...FALLBACK_SOUND_KEYWORDS];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    })();
+
+    for (const keyword of shuffledFallbackKeywords.slice(0, 5)) {
+      throwIfAborted(signal);
+      ctx.flow(`[music] trying fallback: ${keyword}`);
+      await runSearchInPanel(page, workingPanel.searchInput, workingPanel.panelRoot, keyword, ctx, signal);
+      const relaxed = await tryQuickAddAndSaveRelaxedAfterSearch(page, workingPanel.panelRoot, ctx, 14000, signal);
+      if (relaxed.ok) {
+        const okRelaxed = await verifySoundAppliedStrict(page, keyword, ctx, relaxed.pickedText);
+        ctx.flow(`[music] fallback selected: ${relaxed.pickedText || "(unknown)"}`);
+        if (okRelaxed) {
+          setCachedSound(accountUsername, q, relaxed.pickedText || keyword);
+          return { ok: true, soundLabel: relaxed.pickedText || keyword };
+        }
+      }
+    }
+
     ctx.flow("[music] quick add path did not finalize, falling back to scored selection");
   }
 
@@ -1182,11 +1954,11 @@ async function executeOneSoundAttempt(
   let pick: { loc: PwLocator; text: string } | null = null;
   let usedCache = false;
   if (cached) {
-    pick = await trySelectCachedSound(page, workingPanel, cached, ctx);
+    pick = await trySelectCachedSound(page, workingPanel, cached, ctx, signal);
     usedCache = pick != null;
   }
   if (!pick) {
-    pick = await pickBestSoundFromPanel(page, workingPanel, q, ctx);
+    pick = await pickBestSoundFromPanel(page, workingPanel, q, ctx, signal);
   }
   if (!pick) throw new Error("No sound row selected");
   ctx.flow(`[music] selecting row: "${pick.text.slice(0, 120)}"`);
@@ -1194,9 +1966,31 @@ async function executeOneSoundAttempt(
   await pick.loc.scrollIntoViewIfNeeded().catch(() => {});
   await pick.loc.click({ force: true });
   ctx.flow("[music] row clicked");
+
+  // Let TikTok update the row state before trying to click +/apply.
+  await page.waitForTimeout(humanRand(650, 1200));
+
+  // Some TikTok Studio variants require clicking the row's Plus button instead of the row itself.
+  // Try it opportunistically before looking for global/dialog apply buttons.
+  const plusInRow = pick.loc
+    .locator(
+      'button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"]), [role="button"]:has([data-icon="PlusBold"]), [role="button"]:has([data-testid="PlusBold"])'
+    )
+    .first();
+  const plusVisible = await plusInRow.isVisible().catch(() => false);
+  const plusDisabled = await plusInRow.isDisabled().catch(() => true);
+  ctx.flow(`[music] row plus: visible=${plusVisible} disabled=${plusDisabled}`);
+  if (plusVisible && !plusDisabled) {
+    await page.waitForTimeout(humanRand(650, 1200));
+    await plusInRow.click({ force: true }).catch(() => {});
+    ctx.flow("[music] row plus clicked");
+    await page.waitForTimeout(250);
+  }
+
   await musicDebugShot(ctx, page, "step-music-selected.png");
 
-  const appliedBtn = await clickApplySoundIfPresent(page, ctx, 22000);
+  await page.waitForTimeout(500);
+  const appliedBtn = await clickApplySoundIfPresent(page, ctx, 10000);
   if (!appliedBtn) {
     ctx.flow("[music] no explicit apply button — may be single-step");
   }
@@ -1231,7 +2025,8 @@ async function tryAddSoundToVideo(
   await dismissStopCopyrightDialog(page, ctx, "before-sound-flow");
   await dismissAutomaticContentChecksOfferDialog(page, ctx, "before-sound-flow");
 
-  const soundBudgetMs = Number(process.env.TIKTOK_SOUND_FLOW_MS || 40000);
+  const baseSoundBudgetMs = Number(process.env.TIKTOK_SOUND_FLOW_MS || 40000);
+  const soundBudgetMs = q.toLowerCase() === "trending" ? baseSoundBudgetMs : Math.max(baseSoundBudgetMs, 70000);
 
   try {
     await waitForVideoPreviewStableBeforeSound(page, ctx, 90000);
@@ -1266,6 +2061,10 @@ async function tryAddSoundToVideo(
     return label;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (isClosedTargetError(e)) {
+      ctx.flow("[music] aborted: page/context closed");
+      throw e;
+    }
     if (msg === "SOUND_FLOW_TIMEOUT") {
       console.warn("[MUSIC] Aborted: sound flow exceeded budget (ms):", soundBudgetMs);
       ctx.flow(`[music] aborted: sound flow > ${soundBudgetMs}ms`);
@@ -1586,6 +2385,9 @@ export async function runUploadWithSession(
     await postBtn.click({ force: true });
     ctx.flow("Post clicked");
 
+    // Some Studio variants show a confirmation dialog (Continue/Post/Post now/etc).
+    await clickPostConfirmDialogsIfPresent(page, ctx, 12000);
+
     await humanPause(page, 3500, 5500);
 
     const postNow = page.locator(TIKTOK_STUDIO_SELECTORS.postNowConfirm).first();
@@ -1595,6 +2397,9 @@ export async function runUploadWithSession(
       await postNow.click({ force: true });
       await humanPause(page, 2500, 4200);
     }
+
+    // Re-check late confirmations.
+    await clickPostConfirmDialogsIfPresent(page, ctx, 8000);
 
     if (await detectPostRejectedByTikTok(page, ctx)) {
       await ctx.shot(page, "step-post-rejected-modal.png");
@@ -1620,8 +2425,13 @@ export async function runUploadWithSession(
     ctx.flow("flow complete");
     return { success: true, soundUsed };
   } catch (e) {
-    ctx.flow(`error: ${e instanceof Error ? e.message : "Upload failed"}`);
-    return { success: false, error: e instanceof Error ? e.message : "Upload failed", soundUsed };
+    const msg = e instanceof Error ? e.message : "Upload failed";
+    if (isClosedTargetError(e)) {
+      ctx.flow("error: page/context/browser closed");
+      return { success: false, error: "BROWSER_CLOSED", soundUsed };
+    }
+    ctx.flow(`error: ${msg}`);
+    return { success: false, error: msg, soundUsed };
   } finally {
     try {
       if (context) await context.close();

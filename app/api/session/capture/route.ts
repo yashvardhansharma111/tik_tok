@@ -16,14 +16,13 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const allowInteractiveCapture =
-    process.env.NODE_ENV !== "production" || parseTruthy(process.env.ALLOW_INTERACTIVE_SESSION_CAPTURE);
-  if (!allowInteractiveCapture) {
+  /** Opt-out only: set DISABLE_INTERACTIVE_SESSION_CAPTURE=true to block Playwright capture API-wide. */
+  if (parseTruthy(process.env.DISABLE_INTERACTIVE_SESSION_CAPTURE)) {
     return NextResponse.json(
       {
         error:
-          "Interactive session capture is disabled in production. Run capture on your local PC (npm run dev), or paste TikTok storageState JSON below Accounts → Import session.",
-        code: "CAPTURE_DISABLED_PRODUCTION",
+          "Interactive session capture is disabled (DISABLE_INTERACTIVE_SESSION_CAPTURE). Use Import session or re-enable capture in .env.",
+        code: "CAPTURE_DISABLED",
       },
       { status: 403 }
     );

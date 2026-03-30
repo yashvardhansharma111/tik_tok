@@ -6,6 +6,36 @@ import os from "os";
 import path from "path";
 import type { PlaywrightProxyConfig } from "@/lib/proxyPlaywright";
 
+type RenameUsernameResult = {
+  ok: boolean;
+  verified: boolean;
+  error?: string;
+};
+
+function fail(error: RenameUsernameResult["error"]): RenameUsernameResult {
+  return { ok: false, verified: false, error: error || "TikTok UI did not respond after save" };
+}
+
+async function waitForEditProfile(
+  page: import("playwright").Page
+): Promise<import("playwright").Locator | null> {
+  const totalMs = Number(process.env.RENAME_EDIT_PROFILE_WAIT_MS || 60_000);
+  const stepMs = 2_000;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < totalMs) {
+    const button = page.getByRole("button", { name: /edit profile/i }).first();
+    if (await button.isVisible({ timeout: 1500 }).catch(() => false)) return button;
+
+    const link = page.getByRole("link", { name: /edit profile/i }).first();
+    if (await link.isVisible({ timeout: 1500 }).catch(() => false)) return link;
+
+    await page.waitForTimeout(stepMs).catch(() => {});
+  }
+
+  return null;
+}
+
 function scanRootForUsernameIssue(text: string): "taken" | "error" | null {
   const t = text.toLowerCase();
   if (/invalid username|characters not allowed|only letters|special characters/i.test(t)) return "error";
@@ -28,19 +58,30 @@ function scanRootForUsernameIssue(text: string): "taken" | "error" | null {
 async function confirmSetUsernameDialogIfPresent(page: import("playwright").Page): Promise<boolean> {
   const dialog = page
     .locator('[role="dialog"]')
-    .filter({ hasText: /set your username|change your username once every 30 days/i })
+    .filter({ hasText: /set your username|change your username once every 30 days|once every\s*30\s*days/i })
     .first();
 
-  if (!(await dialog.isVisible({ timeout: 8000 }).catch(() => false))) {
+  const dialogByHeading = page
+    .locator('[role="dialog"]')
+    .filter({ has: page.getByRole("heading", { name: /set your username\??/i }) })
+    .first();
+
+  const mainDialog = (await dialog.isVisible({ timeout: 8000 }).catch(() => false))
+    ? dialog
+    : (await dialogByHeading.isVisible({ timeout: 2500 }).catch(() => false))
+      ? dialogByHeading
+      : null;
+
+  if (!mainDialog) {
     renameLog("set_username_confirm_modal_absent");
     return false;
   }
 
   renameLog("set_username_confirm_modal_visible");
 
-  let confirmBtn = dialog.getByRole("button", { name: /^confirm$/i }).first();
+  let confirmBtn = mainDialog.getByRole("button", { name: /^confirm$/i }).first();
   if (!(await confirmBtn.isVisible({ timeout: 4000 }).catch(() => false))) {
-    confirmBtn = dialog.locator("button").filter({ hasText: /^confirm$/i }).first();
+    confirmBtn = mainDialog.locator("button").filter({ hasText: /^confirm$/i }).first();
   }
 
   if (await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -147,7 +188,7 @@ export async function renameTikTokUsername(opts: {
   currentUsername: string;
   newUsername: string;
   proxy?: PlaywrightProxyConfig;
-}): Promise<{ ok: boolean; taken?: boolean; error?: string; verified?: boolean }> {
+}): Promise<RenameUsernameResult> {
   const handle = opts.currentUsername.replace(/^@/, "").trim();
   const next = opts.newUsername.replace(/^@/, "").trim().toLowerCase();
 
@@ -159,12 +200,12 @@ export async function renameTikTokUsername(opts: {
 
   if (!next || next.length < 2) {
     renameLog("abort_invalid_target", { next });
-    return { ok: false, error: "Empty or invalid new username" };
+    return fail("TikTok UI did not respond after save");
   }
 
   if (next === handle.toLowerCase()) {
     renameLog("abort_same_as_current", { handle, next });
-    return { ok: false, error: "New username is the same as current username" };
+    return fail("TikTok UI did not respond after save");
   }
 
   const tmpFile = path.join(
@@ -194,19 +235,11 @@ export async function renameTikTokUsername(opts: {
     await renameSlowPause(page, "after_scroll_on_profile");
     await maybeScreenshot(page, "01-profile-loaded");
 
-    let editProfile = page.getByRole("button", { name: /edit profile/i }).first();
-    if (!(await editProfile.isVisible({ timeout: 8000 }).catch(() => false))) {
-      editProfile = page.getByRole("link", { name: /edit profile/i }).first();
-    }
-
-    if (!(await editProfile.isVisible({ timeout: 20_000 }).catch(() => false))) {
+    const editProfile = await waitForEditProfile(page);
+    if (!editProfile) {
       await maybeScreenshot(page, "02-no-edit-profile");
       renameLog("fail_edit_profile_missing", { url: page.url() });
-      return {
-        ok: false,
-        error:
-          "Edit profile not found (must be logged in as this account). URL: " + profileUrl + " current: " + page.url(),
-      };
+      return fail("Edit profile not found (not logged into this account)");
     }
 
     renameLog("click_edit_profile");
@@ -252,11 +285,7 @@ export async function renameTikTokUsername(opts: {
 
     if (!input) {
       await maybeScreenshot(page, "04-no-username-input");
-      return {
-        ok: false,
-        error:
-          "Could not find username field after Edit profile. See automation/renameTikTokUsername.ts and RENAME_SCREENSHOT_DIR.",
-      };
+      return fail("TikTok UI did not respond after save");
     }
 
     const valueBefore = (await input.inputValue().catch(() => "")) || "(empty)";
@@ -282,34 +311,39 @@ export async function renameTikTokUsername(opts: {
     const saveBtn = page.getByRole("button", { name: /^save$/i }).first();
     if (!(await saveBtn.isVisible({ timeout: 12_000 }).catch(() => false))) {
       await maybeScreenshot(page, "06-no-save-button");
-      return { ok: false, error: "Save button not visible after entering username" };
+      return fail("Save button not visible");
     }
 
     renameLog("click_save");
     await saveBtn.click({ force: true });
     await renameSlowPause(page, "after_save_click_first_wait");
 
-    await confirmSetUsernameDialogIfPresent(page);
+    const confirmed = await confirmSetUsernameDialogIfPresent(page);
     await maybeScreenshot(page, "07-after-save-and-confirm");
 
     const issue = await detectUsernameTakenOrError(page);
     if (issue === "taken") {
       renameLog("result_taken");
-      return { ok: false, taken: true, error: "Username not available on TikTok (detected in UI)", verified: false };
+      return fail("Username not available");
     }
     if (issue === "error") {
       renameLog("result_invalid");
-      return { ok: false, error: "TikTok reported an error for this username", verified: false };
+      return fail("TikTok UI did not respond after save");
     }
 
     await renameSlowPause(page, "before_second_error_scan");
     const issue2 = await detectUsernameTakenOrError(page);
     if (issue2 === "taken") {
       renameLog("result_taken_second_scan");
-      return { ok: false, taken: true, error: "Username not available (second scan)", verified: false };
+      return fail("Username not available");
     }
     if (issue2 === "error") {
-      return { ok: false, error: "TikTok error (second scan)", verified: false };
+      return fail("TikTok UI did not respond after save");
+    }
+
+    if (!confirmed) {
+      // UI didn't show the expected confirm flow; treat as non-responsive.
+      return fail("TikTok UI did not respond after save");
     }
 
     renameLog("no_error_modal_proceed_verify", { url: page.url() });
@@ -318,11 +352,7 @@ export async function renameTikTokUsername(opts: {
     if (!verification.ok) {
       renameLog("FAIL_not_verified", { detail: verification.detail });
       await maybeScreenshot(page, "08-verify-failed");
-      return {
-        ok: false,
-        error: `Rename not verified on TikTok: ${verification.detail}`,
-        verified: false,
-      };
+      return fail("Verification failed: username not updated on profile");
     }
 
     renameLog("SUCCESS_verified", { detail: verification.detail, targetUsername: next });
@@ -330,7 +360,10 @@ export async function renameTikTokUsername(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     renameLog("exception", { message: msg });
-    return { ok: false, error: msg };
+    if (/timeout/i.test(msg)) {
+      return fail("Page load timeout");
+    }
+    return fail("TikTok UI did not respond after save");
   } finally {
     await browser.close().catch(() => {});
     renameLog("browser_closed");

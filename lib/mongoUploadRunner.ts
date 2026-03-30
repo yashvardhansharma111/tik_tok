@@ -81,6 +81,26 @@ async function processUpload(upload: any, browser: Browser) {
 
   let lockedAccount: any = null;
   try {
+    const hasVideo = await fs
+      .stat(videoPath)
+      .then(() => true)
+      .catch(() => false);
+    if (!hasVideo) {
+      const err = `missing_video_file:${videoPath}`;
+      console.warn("[MongoRunner] missing batch video — failing job", { uploadId, accountId, videoPath });
+      await UploadModel.updateOne(
+        { _id: uploadObjectId, status: "uploading" },
+        {
+          $set: {
+            status: "failed",
+            error: err,
+            nextRetryAt: null,
+          },
+        }
+      );
+      return;
+    }
+
     lockedAccount = await lockAccount(accountId);
     if (!lockedAccount) {
       console.warn("[MongoRunner] account busy — failing job (no requeue)", { uploadId, accountId });

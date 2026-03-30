@@ -8,15 +8,14 @@ function parseTruthy(v: string | undefined): boolean {
 }
 
 /**
- * Interactive Playwright capture should run on a dev machine with a display — not on a headless VPS.
- * Override production block with ALLOW_INTERACTIVE_SESSION_CAPTURE=true (e.g. xvfb on server).
+ * Playwright capture runs on the same machine as the Next.js server (opens Chromium, saves session to DB).
+ * Disabled only when DISABLE_INTERACTIVE_SESSION_CAPTURE=true.
  */
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const interactiveAllowed =
-    process.env.NODE_ENV !== "production" || parseTruthy(process.env.ALLOW_INTERACTIVE_SESSION_CAPTURE);
+  const interactiveAllowed = !parseTruthy(process.env.DISABLE_INTERACTIVE_SESSION_CAPTURE);
 
   return NextResponse.json({ interactiveAllowed });
 }
