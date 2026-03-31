@@ -13,6 +13,7 @@ export default function UploadPage() {
   const [musicQuery, setMusicQuery] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [parallelism, setParallelism] = useState(4);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -22,6 +23,7 @@ export default function UploadPage() {
     total: number;
     done: number;
     accountsRemaining: number;
+    parallelism?: number;
     estimatedSecondsRemaining: number;
     complete: boolean;
   } | null>(null);
@@ -58,6 +60,7 @@ export default function UploadPage() {
         total: data.total,
         done: data.done,
         accountsRemaining: data.accountsRemaining,
+        parallelism: data.parallelism,
         estimatedSecondsRemaining: data.estimatedSecondsRemaining,
         complete: data.complete,
       });
@@ -96,6 +99,7 @@ export default function UploadPage() {
     form.append("caption", caption);
     if (musicQuery.trim()) form.append("musicQuery", musicQuery.trim());
     form.append("accountIds", JSON.stringify([...selected]));
+    form.append("parallelism", String(parallelism));
 
     const res = await fetch("/api/upload", { method: "POST", body: form });
     const data = await res.json();
@@ -106,13 +110,14 @@ export default function UploadPage() {
         total: data.processed,
         done: 0,
         accountsRemaining: data.processed,
+        parallelism: data.parallelism,
         estimatedSecondsRemaining: data.processed * 90,
         complete: false,
       });
     }
     setMsg(
       res.ok
-        ? `Started upload to ${data.processed} account(s). Music query: ${data.musicQuery || "default (trending)"}. Progress updates below.`
+        ? `Started upload to ${data.processed} account(s) with parallelism=${data.parallelism || parallelism}. Music query: ${data.musicQuery || "default (trending)"}. Progress updates below.`
         : data.error || "Upload failed"
     );
   };
@@ -245,6 +250,23 @@ export default function UploadPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200">
+                Parallel browsers
+                <select
+                  className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-800 outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  value={parallelism}
+                  onChange={(e) => setParallelism(Number(e.target.value))}
+                >
+                  {Array.from({ length: 16 }).map((_, i) => {
+                    const v = i + 1;
+                    return (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
               <button
                 type="button"
                 onClick={selectAll}
@@ -344,7 +366,7 @@ export default function UploadPage() {
               Accounts remaining: {batchStatus.accountsRemaining} / {batchStatus.total}
             </span>
             <span>
-              ~{Math.ceil(batchStatus.estimatedSecondsRemaining / 60)} min left (estimate)
+              Parallelism: {batchStatus.parallelism || parallelism} · ~{Math.ceil(batchStatus.estimatedSecondsRemaining / 60)} min left
             </span>
           </div>
           <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-teal-200/80 dark:bg-teal-900/50">

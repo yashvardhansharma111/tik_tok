@@ -31,7 +31,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ upl
   const total = rows.length;
   const done = success + failed;
   const accountsRemaining = pending + uploading;
-  const batchSize = Math.max(1, Math.min(32, Number(process.env.UPLOAD_PARALLEL_BATCH_SIZE || 4)));
+  const configuredMax = Math.max(1, Math.min(32, Number(process.env.UPLOAD_PARALLEL_BATCH_SIZE || 4)));
+  const desired = Number((rows[0] as any)?.parallelism);
+  const batchSize = Math.max(1, Math.min(configuredMax, Number.isFinite(desired) ? Math.floor(desired) : configuredMax));
   const avgSec = Math.max(30, Number(process.env.UPLOAD_AVG_SECONDS_PER_ACCOUNT || 90));
   const waves = accountsRemaining > 0 ? Math.ceil(accountsRemaining / batchSize) : 0;
   const estimatedSecondsRemaining = accountsRemaining > 0 ? waves * avgSec : 0;
@@ -47,6 +49,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ upl
     success,
     failed,
     accountsRemaining,
+    parallelism: batchSize,
     estimatedSecondsRemaining,
     complete,
   });

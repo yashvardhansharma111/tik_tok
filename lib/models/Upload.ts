@@ -4,6 +4,8 @@ const UploadSchema = new Schema(
   {
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: false, index: true },
     uploadId: { type: String, required: false, index: true },
+    /** Desired parallelism for this batch (how many accounts to process in a wave). */
+    parallelism: { type: Number, required: false, index: true },
     accountId: { type: Schema.Types.ObjectId, ref: "Account", required: true, index: true },
     videoFileName: { type: String, required: true },
     caption: { type: String, required: true },

@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     let caption = "";
     let musicQuery = "";
     let accountIds: string[] = [];
+    let parallelism = 4;
     let videoPath = "";
     let videoDisplayName = "video.mp4";
 
@@ -58,6 +59,10 @@ export async function POST(request: Request) {
     busboy.on("field", (name: string, val: string) => {
       if (name === "caption") caption = val;
       if (name === "musicQuery") musicQuery = val;
+      if (name === "parallelism") {
+        const n = Number.parseInt(String(val || "").trim(), 10);
+        if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(32, n));
+      }
       if (name === "accountIds") {
         try {
           const parsed = JSON.parse(val);
@@ -137,11 +142,13 @@ export async function POST(request: Request) {
     );
 
     const normalizedMusicQuery = musicQuery.trim();
+    const normalizedParallelism = Math.max(1, Math.min(32, Number(parallelism || 4)));
     console.log("[UploadAPI] parsed request", {
       uploadId,
       accountCount: accountIds.length,
       hasMusicQuery: normalizedMusicQuery.length > 0,
       musicQuery: normalizedMusicQuery || "(none)",
+      parallelism: normalizedParallelism,
     });
 
     const uploadDocs = await Promise.all(
@@ -149,6 +156,7 @@ export async function POST(request: Request) {
         UploadModel.create({
           ownerId,
           uploadId,
+          parallelism: normalizedParallelism,
           accountId: a._id,
           videoFileName: videoDisplayName,
           caption,
@@ -168,6 +176,7 @@ export async function POST(request: Request) {
       processed: uploadDocs.length,
       uploadId,
       musicQuery: normalizedMusicQuery || null,
+      parallelism: normalizedParallelism,
     });
   } catch (e) {
     return NextResponse.json(

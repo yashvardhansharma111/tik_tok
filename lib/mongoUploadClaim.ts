@@ -20,7 +20,10 @@ export async function claimUploadBatch(limit: number): Promise<any[]> {
   const targetUploadId = first.uploadId;
   const claimed: any[] = [];
 
-  for (let i = 0; i < limit; i++) {
+  const desired = Number((first as any)?.parallelism);
+  const effectiveLimit = Math.max(1, Math.min(limit, Number.isFinite(desired) ? Math.floor(desired) : limit));
+
+  for (let i = 0; i < effectiveLimit; i++) {
     const query: Record<string, unknown> = { ...baseMatch };
     if (targetUploadId != null && String(targetUploadId).length > 0) {
       query.uploadId = targetUploadId;

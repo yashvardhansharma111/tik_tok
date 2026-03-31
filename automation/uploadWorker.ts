@@ -526,6 +526,8 @@ export function scoreSoundMatch(musicQuery: string, label: string): number {
   if (!l) return 0;
   let score = 0;
   if (l === q) score += 120;
+  if (q.length > 2 && l.startsWith(q)) score += 220;
+  if (q.length > 2 && l.includes(` ${q} `)) score += 140;
   if (q.length > 2 && l.includes(q)) score += 55;
   if (l.length > 3 && q.includes(l)) score += 35;
   const qTokens = tokenizeForSoundMatch(musicQuery);
@@ -1194,18 +1196,13 @@ async function harvestSoundCandidates(panelRoot: PwLocator): Promise<{ loc: PwLo
       if (isBadSoundLabel(text)) continue;
       if (seen.has(text)) continue;
       seen.add(text);
-let clickable = el.locator(
-  'button, [role="button"], div[tabindex]'
-).first();
-
-if (!(await clickable.count())) {
-  clickable = el; // fallback to row itself
-}
-
-out.push({
-  loc: clickable,
-  text,
-});      if (out.length >= 8) return;
+      // IMPORTANT: keep the *row root* as the candidate locator.
+      // Clicking a global "+" elsewhere can add the wrong sound (often the 3rd row).
+      out.push({
+        loc: el,
+        text,
+      });
+      if (out.length >= 8) return;
     }
   };
 
@@ -1224,8 +1221,8 @@ function rankTopFiveScored(
 ): { loc: PwLocator; text: string; score: number }[] {
   return raw
     .filter((c) => !isBadSoundLabel(c.text))
-    .map((c) => ({ ...c, score: scoreSoundMatch(musicQuery, c.text) }))
-    .sort((a, b) => b.score - a.score)
+    .map((c, index) => ({ ...c, index, score: scoreSoundMatch(musicQuery, c.text) }))
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index))
     .slice(0, 5);
 }
 
@@ -1671,14 +1668,6 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
     if ((await plusInDialog.isVisible().catch(() => false)) && !(await plusInDialog.isDisabled().catch(() => true))) {
       await plusInDialog.click({ force: true }).catch(() => {});
       ctx.flow("[music] apply: clicked Plus button (dialog)");
-      await page.waitForTimeout(250);
-    }
-    const plusGlobal = page
-      .locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])')
-      .first();
-    if ((await plusGlobal.isVisible().catch(() => false)) && !(await plusGlobal.isDisabled().catch(() => true))) {
-      await plusGlobal.click({ force: true }).catch(() => {});
-      ctx.flow("[music] apply: clicked Plus button (global)");
       await page.waitForTimeout(250);
     }
 
