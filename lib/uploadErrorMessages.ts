@@ -13,7 +13,11 @@ export function friendlyUploadError(raw: string | undefined | null): string {
     /\baccount_lock_busy\b/i.test(s) ||
     /^ACCOUNT_LOCKED:/i.test(s)
   ) {
-    return "This account is already in use: another upload is running, or the last run crashed and the lock clears after a few minutes. If nobody else is using it, wait 2–45 minutes (see server settings) or restart workers after a crash. Only one automation per account at a time.";
+    return "Legacy “account busy” (older runs used a lock). Account locks are off now — you can retry. Old History rows may still show this code.";
+  }
+
+  if (s === "account_not_found" || /\baccount_not_found\b/i.test(s)) {
+    return "That TikTok account no longer exists in the database. Refresh the Accounts page and try again.";
   }
 
   if (s.startsWith("missing_video_file:") || s.includes("missing_video_file")) {
@@ -55,7 +59,8 @@ export function friendlyUploadError(raw: string | undefined | null): string {
 export function shortUploadErrorLabel(raw: string | undefined | null): string {
   if (raw == null || String(raw).trim() === "") return "Error";
   const s = String(raw);
-  if (s === "account_lock_busy" || /\baccount_lock_busy\b/i.test(s)) return "Account busy";
+  if (s === "account_lock_busy" || /\baccount_lock_busy\b/i.test(s) || /^ACCOUNT_LOCKED:/i.test(s))
+    return "Legacy busy";
   if (s.startsWith("missing_video_file:") || s.includes("missing_video_file")) return "Video missing on server";
   if (/SESSION_EXPIRED|session expired/i.test(s)) return "Session expired";
   if (/ERR_TUNNEL|proxy|net::ERR_/i.test(s)) return "Network / proxy";

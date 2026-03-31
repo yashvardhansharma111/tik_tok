@@ -10,7 +10,6 @@ import { claimUploadBatch } from "../lib/mongoUploadClaim";
 import { getUploadParallelAdminCap } from "../lib/uploadParallelConfig";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
-import { lockAccount, unlockAccount, startAccountLockHeartbeat } from "../lib/accountLock";
 
 type PlaywrightProxyConfig = {
   server: string;
@@ -66,25 +65,21 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
 
   const videoPath = path.join(process.cwd(), "storage", "tmp-uploads", uploadId, "video.mp4");
 
-  let lockedAccount: any = null;
-  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    lockedAccount = await lockAccount(accountId);
-    if (!lockedAccount) {
+    const accountDoc = await AccountModel.findById(accountId).lean();
+    if (!accountDoc) {
       await UploadModel.updateOne(
         { _id: uploadObjectId, status: "uploading" },
         {
           $set: {
             status: "failed",
-            error: "account_lock_busy",
+            error: "account_not_found",
             nextRetryAt: null,
           },
         }
       );
       return;
     }
-
-    lockHeartbeat = startAccountLockHeartbeat(accountId);
 
     const updated = await UploadModel.findOneAndUpdate(
       { _id: uploadObjectId, status: "uploading" },
@@ -93,19 +88,22 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
     ).lean();
 
     if (!updated) {
-      await unlockAccount(accountId);
       return;
     }
 
     const attemptNumber: number = updated.attempts || 1;
 
-    const proxyConfig = buildIproxyConfig(lockedAccount.username, lockedAccount.proxy, attemptNumber);
+    const proxyConfig = buildIproxyConfig(
+      (accountDoc as any).username,
+      (accountDoc as any).proxy,
+      attemptNumber
+    );
 
     console.log("[MongoWorker] job start", {
       queue: "mongo-upload",
       uploadId,
       accountId,
-      username: lockedAccount.username,
+      username: (accountDoc as any).username,
       attemptNumber,
     });
 
@@ -115,8 +113,8 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
         : undefined;
 
     const result = await runUploadWithSession(
-      lockedAccount.username,
-      lockedAccount.session,
+      (accountDoc as any).username,
+      (accountDoc as any).session,
       videoPath,
       caption,
       proxyConfig,
@@ -137,9 +135,9 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
       );
       await AccountModel.updateOne(
         { _id: new mongoose.Types.ObjectId(accountId) },
-        { $set: { lastUsedAt: new Date(), status: "active", isUploading: false, isUploadingAt: null } }
+        { $set: { lastUsedAt: new Date(), status: "active" } }
       );
-      console.log("[MongoWorker] job success", { uploadId, accountId, username: lockedAccount.username });
+      console.log("[MongoWorker] job success", { uploadId, accountId, username: (accountDoc as any).username });
     } else {
       const errorMsg = result.error || "Upload failed";
       await markAccountExpiredIfSessionError(accountId, errorMsg);
@@ -162,11 +160,10 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
         );
       }
 
-      await unlockAccount(accountId);
       console.warn("[MongoWorker] job failed", {
         uploadId,
         accountId,
-        username: lockedAccount.username,
+        username: (accountDoc as any).username,
         attemptNumber,
         willRetry: shouldRetry,
         error: errorMsg,
@@ -178,10 +175,8 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
       { _id: uploadObjectId },
       { $set: { status: "failed", error: msg } }
     ).catch(() => {});
-    await unlockAccount(accountId);
     console.error("[MongoWorker] processing error", { uploadId, accountId, msg });
   } finally {
-    if (lockHeartbeat) clearInterval(lockHeartbeat);
     await cleanupBatchIfLast(uploadId);
   }
 }

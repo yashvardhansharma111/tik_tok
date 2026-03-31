@@ -85,7 +85,7 @@ Progress ETA on `/api/upload/status/[uploadId]` uses the same batch size to esti
 | `UPLOAD_MAX_ATTEMPTS` | `1` | **One** Playwright run per upload row. Set `2` only if you explicitly want a retry after failure. |
 | `UPLOAD_RETRY_DELAY_MS` | `15000` | Used only when `UPLOAD_MAX_ATTEMPTS` &gt; 1. |
 
-If the account is locked by another job, the row is marked **failed** (`account_lock_busy`) — it is **not** re-queued in a loop.
+Per-account upload locks are **no longer used** — the same TikTok account may be automated by more than one job at a time (risk of duplicate posts or TikTok conflicts). Older History rows may still show `account_lock_busy`.
 
 ### Human-like Studio pacing (Playwright)
 

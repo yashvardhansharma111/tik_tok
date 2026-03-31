@@ -8,7 +8,6 @@ import { UploadModel } from "../lib/models/Upload";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { launchChromium } from "../lib/playwrightLaunch";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
-import { lockAccount, startAccountLockHeartbeat } from "../lib/accountLock";
 import mongoose from "mongoose";
 
 let browserInstance: import("playwright").Browser | null = null;
@@ -82,19 +81,9 @@ async function processUpload(job: Job<UploadJobPayload>) {
     maxAttempts,
   });
 
-  let accountLocked = false;
   let uploadDocId: string | null = job.data.uploadDocId ?? null;
-  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
 
   try {
-    const locked = await lockAccount(accountId);
-
-    if (!locked) {
-      throw new Error(`ACCOUNT_LOCKED:${accountId}`);
-    }
-    accountLocked = true;
-    lockHeartbeat = startAccountLockHeartbeat(accountId);
-
     const uploadDoc =
       uploadDocId
         ? await UploadModel.findById(uploadDocId).lean()
@@ -213,13 +202,6 @@ async function processUpload(job: Job<UploadJobPayload>) {
     });
     throw e;
   } finally {
-    if (lockHeartbeat) clearInterval(lockHeartbeat);
-    if (accountLocked) {
-      await AccountModel.updateOne(
-        { _id: accountId },
-        { $set: { isUploading: false, isUploadingAt: null } }
-      ).catch(() => {});
-    }
     await cleanupBatchIfLast(videoPath, uploadId);
   }
 }

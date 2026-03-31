@@ -168,7 +168,7 @@ export default function UploadPage() {
       <PageHeader
         eyebrow="Publish"
         title="Upload to TikTok"
-        description="Pick your video and caption, then choose which linked accounts should post the same clip. Each selected account runs automation in its own browser context using its saved session. If you use two servers, each server has its own “parallel browsers” setting — they do not change each other. The same TikTok account cannot upload twice at once: if another job is using it, you’ll see a clear “account busy” message."
+        description="Pick your video and caption, then choose which linked accounts should post the same clip. Each selected account runs automation in its own browser context using its saved session. If you use two servers, each server has its own “parallel browsers” setting — they do not change each other."
       />
 
       <form onSubmit={submit} className="space-y-10">

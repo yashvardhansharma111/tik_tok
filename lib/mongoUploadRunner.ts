@@ -12,7 +12,6 @@ import { getUploadParallelAdminCap } from "@/lib/uploadParallelConfig";
 import { runUploadWithSession } from "@/automation/uploadWorker";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
-import { lockAccount, unlockAccount, startAccountLockHeartbeat } from "@/lib/accountLock";
 
 /** Single runner + abort handle survives Next.js HMR better than module-local flags alone. */
 const RUNNER_SINGLETON_KEY = "__mongoUploadRunnerSingleton_v1";
@@ -55,8 +54,6 @@ async function processUpload(upload: any, browser: Browser) {
   const uploadObjectId = upload._id;
   const videoPath = path.join(process.cwd(), "storage", "tmp-uploads", uploadId, "video.mp4");
 
-  let lockedAccount: any = null;
-  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const hasVideo = await fs
       .stat(videoPath)
@@ -78,23 +75,21 @@ async function processUpload(upload: any, browser: Browser) {
       return;
     }
 
-    lockedAccount = await lockAccount(accountId);
-    if (!lockedAccount) {
-      console.warn("[MongoRunner] account busy — failing job (no requeue)", { uploadId, accountId });
+    const accountDoc = await AccountModel.findById(accountId).lean();
+    if (!accountDoc) {
+      console.warn("[MongoRunner] account not found", { uploadId, accountId });
       await UploadModel.updateOne(
         { _id: uploadObjectId, status: "uploading" },
         {
           $set: {
             status: "failed",
-            error: "account_lock_busy",
+            error: "account_not_found",
             nextRetryAt: null,
           },
         }
       );
       return;
     }
-
-    lockHeartbeat = startAccountLockHeartbeat(accountId);
 
     const bumped = await UploadModel.findOneAndUpdate(
       { _id: uploadObjectId, status: "uploading" },
@@ -103,7 +98,6 @@ async function processUpload(upload: any, browser: Browser) {
     ).lean();
 
     if (!bumped) {
-      await unlockAccount(accountId);
       return;
     }
 
@@ -116,21 +110,25 @@ async function processUpload(upload: any, browser: Browser) {
 
     const attemptNumber: number = updated.attempts || 1;
     const proxyConfig =
-      buildStickyProxyForAccount(lockedAccount.username, lockedAccount.proxy, attemptNumber) ?? {
+      buildStickyProxyForAccount(
+        (accountDoc as any).username,
+        (accountDoc as any).proxy,
+        attemptNumber
+      ) ?? {
         server: process.env.PROXY_SERVER || "http://geo.iproyal.com:12321",
       };
 
     console.log("[MongoRunner] start", {
       uploadId,
       accountId,
-      username: lockedAccount.username,
+      username: (accountDoc as any).username,
       attemptNumber,
       musicQuery: musicQuery || "(none)",
     });
 
     const result = await runUploadWithSession(
-      lockedAccount.username,
-      lockedAccount.session,
+      (accountDoc as any).username,
+      (accountDoc as any).session,
       videoPath,
       caption,
       proxyConfig,
@@ -149,7 +147,7 @@ async function processUpload(upload: any, browser: Browser) {
           },
         }
       );
-      console.log("[MongoRunner] success", { uploadId, accountId, username: lockedAccount.username });
+      console.log("[MongoRunner] success", { uploadId, accountId, username: (accountDoc as any).username });
       await AccountModel.updateOne(
         { _id: new mongoose.Types.ObjectId(accountId) },
         { $set: { lastUsedAt: new Date(), status: "active" } }
@@ -185,16 +183,12 @@ async function processUpload(upload: any, browser: Browser) {
     console.warn("[MongoRunner] failed", {
       uploadId,
       accountId,
-      username: lockedAccount.username,
+      username: (accountDoc as any).username,
       attemptNumber,
       willRetry: shouldRetry,
       error: errorMsg,
     });
   } finally {
-    if (lockHeartbeat) clearInterval(lockHeartbeat);
-    if (lockedAccount) {
-      await unlockAccount(accountId);
-    }
     await cleanupBatchIfLast(uploadId);
   }
 }
