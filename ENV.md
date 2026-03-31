@@ -66,11 +66,11 @@ Saves a session to `storage/cookies/testAccount.json` after you log in and press
 
 ## Upload queue (multi-account batches)
 
-The Mongo upload runner processes jobs in **parallel waves** of the same size (default **4**): accounts 1–4 together, then 5–8, then 9–12, etc. Jobs are claimed from the **same** `uploadId` batch when possible so one user’s batch is not interleaved with another’s.
+The Mongo upload runner processes jobs in **parallel waves**: each wave runs up to the **per-upload** `parallelism` from the form (capped by `UPLOAD_PARALLEL_BATCH_SIZE` when set). If the env var is **unset**, the ceiling is **32** so UI choices up to 32 are honored. Jobs are claimed from the **same** `uploadId` batch when possible so one user’s batch is not interleaved with another’s.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `UPLOAD_PARALLEL_BATCH_SIZE` | `4` | How many accounts run **at the same time** per wave (max 32). |
+| `UPLOAD_PARALLEL_BATCH_SIZE` | *(unset → 32)* | Server-wide max concurrent jobs per wave (max 32). Set lower (e.g. `4`) on small hosts to limit RAM/CPU. |
 | `UPLOAD_BATCH_GAP_MS` | `0` | Extra pause (ms) after a wave finishes before the next poll cycle. |
 | `UPLOAD_POLL_INTERVAL_MS` | `2500` | Sleep when the queue is empty. |
 

@@ -10,27 +10,39 @@ export async function claimUploadBatch(limit: number): Promise<any[]> {
   const baseMatch = {
     status: "pending" as const,
     $or: [{ nextRetryAt: null }, { nextRetryAt: { $lte: now } }],
+    uploadId: { $exists: true, $nin: [null, ""] },
   };
 
-  // Prefer the newest batch so a user-triggered upload runs immediately.
-  // Older pending jobs can exist if a previous run crashed or tmp files were cleaned.
-  const first = await UploadModel.findOne(baseMatch).sort({ timestamp: -1 }).lean();
-  if (!first) return [];
+  // Prefer the newest batch (by max row timestamp), not an arbitrary row with the same ms.
+  const [newestBatch] = await UploadModel.aggregate([
+    { $match: baseMatch },
+    {
+      $group: {
+        _id: "$uploadId",
+        maxTs: { $max: "$timestamp" },
+        parallelism: { $max: "$parallelism" },
+      },
+    },
+    { $sort: { maxTs: -1, _id: -1 } },
+    { $limit: 1 },
+  ]);
 
-  const targetUploadId = first.uploadId;
+  if (!newestBatch?._id) return [];
+
+  const targetUploadId = newestBatch._id;
+  const desired = Number(newestBatch.parallelism);
+  const useDesired = Number.isFinite(desired) && desired > 0;
+  const effectiveLimit = Math.max(1, Math.min(limit, useDesired ? Math.floor(desired) : limit));
+
+  const queryBase = {
+    ...baseMatch,
+    uploadId: targetUploadId,
+  };
+
   const claimed: any[] = [];
-
-  const desired = Number((first as any)?.parallelism);
-  const effectiveLimit = Math.max(1, Math.min(limit, Number.isFinite(desired) ? Math.floor(desired) : limit));
-
   for (let i = 0; i < effectiveLimit; i++) {
-    const query: Record<string, unknown> = { ...baseMatch };
-    if (targetUploadId != null && String(targetUploadId).length > 0) {
-      query.uploadId = targetUploadId;
-    }
-
     const job = await UploadModel.findOneAndUpdate(
-      query,
+      queryBase,
       {
         $set: { status: "uploading", error: undefined, nextRetryAt: null },
       },

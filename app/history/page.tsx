@@ -59,7 +59,16 @@ export default function HistoryPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-500 dark:text-zinc-400">
                     {new Date(r.timestamp).toLocaleString()}
                   </td>
-                  <td className="max-w-[180px] truncate px-4 py-3 text-red-600 dark:text-red-400">{r.error || "—"}</td>
+                  <td
+                    className="max-w-[min(360px,80vw)] px-4 py-3 text-sm text-red-700 dark:text-red-300"
+                    title={r.error || ""}
+                  >
+                    {r.status === "failed" ? (
+                      <span className="block leading-snug">{r.errorFriendly || r.error || "—"}</span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

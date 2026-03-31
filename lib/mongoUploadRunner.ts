@@ -8,9 +8,11 @@ import { connectDB } from "@/lib/db";
 import { AccountModel } from "@/lib/models/Account";
 import { UploadModel } from "@/lib/models/Upload";
 import { claimUploadBatch } from "@/lib/mongoUploadClaim";
+import { getUploadParallelAdminCap } from "@/lib/uploadParallelConfig";
 import { runUploadWithSession } from "@/automation/uploadWorker";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
+import { lockAccount, unlockAccount, startAccountLockHeartbeat } from "@/lib/accountLock";
 
 /** Single runner + abort handle survives Next.js HMR better than module-local flags alone. */
 const RUNNER_SINGLETON_KEY = "__mongoUploadRunnerSingleton_v1";
@@ -46,32 +48,6 @@ async function cleanupBatchIfLast(uploadId: string) {
   }
 }
 
-async function lockAccount(accountId: string) {
-  const lockTtlMs = Number(process.env.ACCOUNT_LOCK_TTL_MS || 10 * 60 * 1000);
-  const staleDate = new Date(Date.now() - lockTtlMs);
-
-  return AccountModel.findOneAndUpdate(
-    {
-      _id: new mongoose.Types.ObjectId(accountId),
-      $or: [
-        { isUploading: { $ne: true } },
-        { isUploadingAt: { $exists: false } },
-        { isUploadingAt: null },
-        { isUploadingAt: { $lt: staleDate } },
-      ],
-    },
-    { $set: { isUploading: true, isUploadingAt: new Date(), status: "active" } },
-    { returnDocument: "after" }
-  ).lean();
-}
-
-async function unlockAccount(accountId: string) {
-  await AccountModel.updateOne(
-    { _id: new mongoose.Types.ObjectId(accountId) },
-    { $set: { isUploading: false, isUploadingAt: null } }
-  ).catch(() => {});
-}
-
 async function processUpload(upload: any, browser: Browser) {
   const uploadId: string = upload.uploadId;
   const accountId: string = String(upload.accountId);
@@ -80,6 +56,7 @@ async function processUpload(upload: any, browser: Browser) {
   const videoPath = path.join(process.cwd(), "storage", "tmp-uploads", uploadId, "video.mp4");
 
   let lockedAccount: any = null;
+  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const hasVideo = await fs
       .stat(videoPath)
@@ -117,6 +94,8 @@ async function processUpload(upload: any, browser: Browser) {
       return;
     }
 
+    lockHeartbeat = startAccountLockHeartbeat(accountId);
+
     const bumped = await UploadModel.findOneAndUpdate(
       { _id: uploadObjectId, status: "uploading" },
       { $inc: { attempts: 1 } },
@@ -124,6 +103,7 @@ async function processUpload(upload: any, browser: Browser) {
     ).lean();
 
     if (!bumped) {
+      await unlockAccount(accountId);
       return;
     }
 
@@ -211,6 +191,7 @@ async function processUpload(upload: any, browser: Browser) {
       error: errorMsg,
     });
   } finally {
+    if (lockHeartbeat) clearInterval(lockHeartbeat);
     if (lockedAccount) {
       await unlockAccount(accountId);
     }
@@ -219,9 +200,9 @@ async function processUpload(upload: any, browser: Browser) {
 }
 
 async function runnerLoop(signal: AbortSignal) {
-  const batchSize = Math.max(1, Math.min(32, Number(process.env.UPLOAD_PARALLEL_BATCH_SIZE || 4)));
+  const batchSize = getUploadParallelAdminCap();
   const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 2500);
-  /** Optional pause after a parallel wave finishes (before the next 1–4 / 5–8 wave). */
+  /** Optional pause after a parallel wave finishes (before the next wave). */
   const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
 
   const browser = await launchChromium("automation");

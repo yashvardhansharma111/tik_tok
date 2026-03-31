@@ -22,10 +22,15 @@ export default function UploadPage() {
   const [batchStatus, setBatchStatus] = useState<{
     total: number;
     done: number;
+    success: number;
+    failed: number;
     accountsRemaining: number;
     parallelism?: number;
     estimatedSecondsRemaining: number;
     complete: boolean;
+    failedDetails?: { accountUsername: string; friendlyMessage: string; rawError?: string }[];
+    staleUploading?: { accountUsername: string; minutesStuckApprox: number }[];
+    hasParallelismNote?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -58,11 +63,16 @@ export default function UploadPage() {
       }
       setBatchStatus({
         total: data.total,
-        done: data.done,
+        done: data.done ?? data.success + data.failed,
+        success: data.success ?? 0,
+        failed: data.failed ?? 0,
         accountsRemaining: data.accountsRemaining,
         parallelism: data.parallelism,
         estimatedSecondsRemaining: data.estimatedSecondsRemaining,
         complete: data.complete,
+        failedDetails: data.failedDetails,
+        staleUploading: data.staleUploading,
+        hasParallelismNote: data.hasParallelismNote,
       });
       if (data.complete) setBatchUploadId(null);
     };
@@ -109,6 +119,8 @@ export default function UploadPage() {
       setBatchStatus({
         total: data.processed,
         done: 0,
+        success: 0,
+        failed: 0,
         accountsRemaining: data.processed,
         parallelism: data.parallelism,
         estimatedSecondsRemaining: data.processed * 90,
@@ -156,7 +168,7 @@ export default function UploadPage() {
       <PageHeader
         eyebrow="Publish"
         title="Upload to TikTok"
-        description="Pick your video and caption, then choose which linked accounts should post the same clip. Each selected account runs automation in its own browser context using its saved session."
+        description="Pick your video and caption, then choose which linked accounts should post the same clip. Each selected account runs automation in its own browser context using its saved session. If you use two servers, each server has its own “parallel browsers” setting — they do not change each other. The same TikTok account cannot upload twice at once: if another job is using it, you’ll see a clear “account busy” message."
       />
 
       <form onSubmit={submit} className="space-y-10">
@@ -359,29 +371,97 @@ export default function UploadPage() {
       </form>
 
       {batchStatus && !batchStatus.complete && (
-        <div className="mt-8 rounded-2xl border border-teal-200/90 bg-teal-50/80 p-5 shadow-md dark:border-teal-900/50 dark:bg-teal-950/30">
-          <p className="text-sm font-bold text-teal-900 dark:text-teal-100">Batch progress</p>
-          <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs font-semibold text-teal-800 dark:text-teal-200">
+        <div
+          className={`mt-8 rounded-2xl border p-5 shadow-md ${
+            batchStatus.failed > 0 || (batchStatus.staleUploading && batchStatus.staleUploading.length > 0)
+              ? "border-amber-300/90 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/25"
+              : "border-teal-200/90 bg-teal-50/80 dark:border-teal-900/50 dark:bg-teal-950/30"
+          }`}
+        >
+          <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Batch progress</p>
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            {batchStatus.hasParallelismNote ||
+              "Parallel browsers applies only on this server’s worker — not other machines."}
+          </p>
+          <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200">
             <span>
-              Accounts remaining: {batchStatus.accountsRemaining} / {batchStatus.total}
+              Done: {batchStatus.done} / {batchStatus.total} · Remaining: {batchStatus.accountsRemaining}
+              {batchStatus.failed > 0 && (
+                <span className="ml-2 text-amber-800 dark:text-amber-200">
+                  ({batchStatus.failed} failed so far)
+                </span>
+              )}
             </span>
             <span>
-              Parallelism: {batchStatus.parallelism || parallelism} · ~{Math.ceil(batchStatus.estimatedSecondsRemaining / 60)} min left
+              Parallelism: {batchStatus.parallelism || parallelism} · ~
+              {Math.max(0, Math.ceil(batchStatus.estimatedSecondsRemaining / 60))} min est.
             </span>
           </div>
-          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-teal-200/80 dark:bg-teal-900/50">
+          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-zinc-200/80 dark:bg-zinc-800/80">
             <div
               className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all duration-500"
               style={{
-                width: `${batchStatus.total ? ((batchStatus.total - batchStatus.accountsRemaining) / batchStatus.total) * 100 : 0}%`,
+                width: `${batchStatus.total ? (batchStatus.done / batchStatus.total) * 100 : 0}%`,
               }}
             />
           </div>
+          {batchStatus.staleUploading && batchStatus.staleUploading.length > 0 && (
+            <div className="mt-4 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-950 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-100">
+              <p className="font-bold">These accounts look stuck “uploading” too long</p>
+              <ul className="mt-2 list-inside list-disc space-y-1">
+                {batchStatus.staleUploading.map((s, i) => (
+                  <li key={i}>
+                    @{s.accountUsername} (~{s.minutesStuckApprox} min) — the worker may have crashed or lost the
+                    video. Check this server’s logs or History; you may need to upload again.
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {batchStatus.failedDetails && batchStatus.failedDetails.length > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/35 dark:text-amber-100">
+              <p className="font-bold">Problems on some accounts (not silent — read below)</p>
+              <ul className="mt-2 space-y-2">
+                {batchStatus.failedDetails.map((f, i) => (
+                  <li key={i} className="rounded-lg bg-white/60 px-3 py-2 dark:bg-zinc-900/40">
+                    <span className="font-semibold">@{f.accountUsername}</span>
+                    <span className="mt-1 block text-[13px] leading-snug">{f.friendlyMessage}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
       {batchStatus?.complete && (
-        <div className="mt-8 rounded-2xl border border-emerald-200/90 bg-emerald-50/90 px-5 py-4 text-sm font-semibold text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
-          All uploads in this batch finished ({batchStatus.done}/{batchStatus.total}).
+        <div
+          className={`mt-8 rounded-2xl border px-5 py-4 text-sm font-semibold ${
+            batchStatus.failed > 0
+              ? "border-amber-300/90 bg-amber-50/90 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100"
+              : "border-emerald-200/90 bg-emerald-50/90 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200"
+          }`}
+        >
+          {batchStatus.failed === 0 ? (
+            <p>Finished: all {batchStatus.success} upload(s) succeeded.</p>
+          ) : (
+            <div>
+              <p>
+                Finished: {batchStatus.success} succeeded, {batchStatus.failed} failed (out of {batchStatus.total}).
+              </p>
+              {batchStatus.failedDetails && batchStatus.failedDetails.length > 0 && (
+                <ul className="mt-3 space-y-2 font-normal">
+                  {batchStatus.failedDetails.map((f, i) => (
+                    <li key={i} className="rounded-lg bg-white/70 px-3 py-2 text-[13px] leading-snug dark:bg-zinc-900/50">
+                      <span className="font-semibold">@{f.accountUsername}:</span> {f.friendlyMessage}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-3 text-xs font-normal opacity-90">
+                Open History for a full log. Technical codes are stored for admins.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

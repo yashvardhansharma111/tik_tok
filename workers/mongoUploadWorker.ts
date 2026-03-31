@@ -7,8 +7,10 @@ import { connectDB } from "../lib/db";
 import { AccountModel } from "../lib/models/Account";
 import { UploadModel } from "../lib/models/Upload";
 import { claimUploadBatch } from "../lib/mongoUploadClaim";
+import { getUploadParallelAdminCap } from "../lib/uploadParallelConfig";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
+import { lockAccount, unlockAccount, startAccountLockHeartbeat } from "../lib/accountLock";
 
 type PlaywrightProxyConfig = {
   server: string;
@@ -56,32 +58,6 @@ async function cleanupBatchIfLast(uploadId: string) {
   }
 }
 
-async function unlockAccount(accountId: string) {
-  await AccountModel.updateOne(
-    { _id: new mongoose.Types.ObjectId(accountId) },
-    { $set: { isUploading: false, isUploadingAt: null } }
-  ).catch(() => {});
-}
-
-async function lockAccount(accountId: string) {
-  const lockTtlMs = Number(process.env.ACCOUNT_LOCK_TTL_MS || 10 * 60 * 1000);
-  const staleDate = new Date(Date.now() - lockTtlMs);
-
-  return AccountModel.findOneAndUpdate(
-    {
-      _id: new mongoose.Types.ObjectId(accountId),
-      $or: [
-        { isUploading: { $ne: true } },
-        { isUploadingAt: { $exists: false } },
-        { isUploadingAt: null },
-        { isUploadingAt: { $lt: staleDate } },
-      ],
-    },
-    { $set: { isUploading: true, isUploadingAt: new Date(), status: "active" } },
-    { new: true }
-  ).lean();
-}
-
 async function processOneUpload(upload: any, browser: import("playwright").Browser) {
   const uploadId: string = upload.uploadId;
   const accountId: string = String(upload.accountId);
@@ -91,6 +67,7 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
   const videoPath = path.join(process.cwd(), "storage", "tmp-uploads", uploadId, "video.mp4");
 
   let lockedAccount: any = null;
+  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     lockedAccount = await lockAccount(accountId);
     if (!lockedAccount) {
@@ -106,6 +83,8 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
       );
       return;
     }
+
+    lockHeartbeat = startAccountLockHeartbeat(accountId);
 
     const updated = await UploadModel.findOneAndUpdate(
       { _id: uploadObjectId, status: "uploading" },
@@ -202,6 +181,7 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
     await unlockAccount(accountId);
     console.error("[MongoWorker] processing error", { uploadId, accountId, msg });
   } finally {
+    if (lockHeartbeat) clearInterval(lockHeartbeat);
     await cleanupBatchIfLast(uploadId);
   }
 }
@@ -209,7 +189,7 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
 async function main() {
   await connectDB();
 
-  const batchSize = Math.max(1, Math.min(32, Number(process.env.UPLOAD_PARALLEL_BATCH_SIZE || 4)));
+  const batchSize = getUploadParallelAdminCap();
   const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 2500);
   const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
 

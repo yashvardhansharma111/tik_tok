@@ -8,6 +8,7 @@ import { UploadModel } from "../lib/models/Upload";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { launchChromium } from "../lib/playwrightLaunch";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
+import { lockAccount, startAccountLockHeartbeat } from "../lib/accountLock";
 import mongoose from "mongoose";
 
 let browserInstance: import("playwright").Browser | null = null;
@@ -83,29 +84,16 @@ async function processUpload(job: Job<UploadJobPayload>) {
 
   let accountLocked = false;
   let uploadDocId: string | null = job.data.uploadDocId ?? null;
+  let lockHeartbeat: ReturnType<typeof setInterval> | undefined;
 
   try {
-    const lockTtlMs = Number(process.env.ACCOUNT_LOCK_TTL_MS || 10 * 60 * 1000);
-    const staleDate = new Date(Date.now() - lockTtlMs);
-
-    const locked = await AccountModel.findOneAndUpdate(
-      {
-        _id: new mongoose.Types.ObjectId(accountId),
-        $or: [
-          { isUploading: { $ne: true } },
-          { isUploadingAt: { $exists: false } },
-          { isUploadingAt: null },
-          { isUploadingAt: { $lt: staleDate } },
-        ],
-      },
-      { $set: { isUploading: true, isUploadingAt: new Date(), status: "active" } },
-      { new: true }
-    ).lean();
+    const locked = await lockAccount(accountId);
 
     if (!locked) {
       throw new Error(`ACCOUNT_LOCKED:${accountId}`);
     }
     accountLocked = true;
+    lockHeartbeat = startAccountLockHeartbeat(accountId);
 
     const uploadDoc =
       uploadDocId
@@ -225,6 +213,7 @@ async function processUpload(job: Job<UploadJobPayload>) {
     });
     throw e;
   } finally {
+    if (lockHeartbeat) clearInterval(lockHeartbeat);
     if (accountLocked) {
       await AccountModel.updateOne(
         { _id: accountId },

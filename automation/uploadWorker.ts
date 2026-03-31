@@ -547,6 +547,36 @@ export function scoreSoundMatch(musicQuery: string, label: string): number {
   return score;
 }
 
+/** Short human-readable hints for logs (mirrors `scoreSoundMatch` rules). */
+export function explainSoundMatch(musicQuery: string, label: string): string {
+  const q = musicQuery.trim().toLowerCase();
+  const l = label.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!l) return "empty label";
+  const parts: string[] = [];
+  if (l === q) parts.push("exact match");
+  if (q.length > 2 && l.startsWith(q)) parts.push("label starts with query");
+  if (q.length > 2 && l.includes(` ${q} `)) parts.push("whole-word query in label");
+  if (q.length > 2 && l.includes(q)) parts.push("substring hit");
+  if (l.length > 3 && q.includes(l)) parts.push("query contains label");
+  const qTokens = tokenizeForSoundMatch(musicQuery);
+  const lTokens = new Set(tokenizeForSoundMatch(label));
+  let tokenHits = 0;
+  for (const t of qTokens) {
+    if (t.length < 2) continue;
+    let hit = false;
+    for (const lt of lTokens) {
+      if (lt.includes(t) || t.includes(lt)) {
+        hit = true;
+        break;
+      }
+    }
+    if (hit) tokenHits += 1;
+  }
+  if (tokenHits) parts.push(`${tokenHits} token overlap(s)`);
+  if (parts.length === 0) parts.push("length / weak match bonus only");
+  return parts.join("; ");
+}
+
 type PwLocator = import("playwright").Locator;
 
 /** True if node lies in the smallest ancestor of Post that also contains the caption (upload column, not left rail). */
@@ -1180,7 +1210,10 @@ try {
 
 const ROW_SKIP_LABEL = /^(close|cancel|back)$/i;
 
-async function harvestSoundCandidates(panelRoot: PwLocator): Promise<{ loc: PwLocator; text: string }[]> {
+async function harvestSoundCandidates(
+  panelRoot: PwLocator,
+  ctx?: FlowContext
+): Promise<{ loc: PwLocator; text: string }[]> {
   const out: { loc: PwLocator; text: string }[] = [];
   const seen = new Set<string>();
 
@@ -1212,18 +1245,52 @@ async function harvestSoundCandidates(panelRoot: PwLocator): Promise<{ loc: PwLo
     await tryHarvest(panelRoot.locator('[role="listbox"] button, [role="grid"] button, [role="listbox"] a'));
   }
 
-  return out.slice(0, 8);
+  const sliced = out.slice(0, 8);
+  if (ctx) {
+    if (sliced.length === 0) {
+      ctx.flow("[music][audio] harvested rows: none (no visible sound/option rows in panel)");
+    } else {
+      const lines = sliced.map((o, i) => {
+        const t = o.text.replace(/\s+/g, " ").trim();
+        const short = t.length > 90 ? `${t.slice(0, 90)}…` : t;
+        return `#${i + 1} "${short}"`;
+      });
+      ctx.flow(`[music][audio] harvested ${sliced.length} visible row(s): ${lines.join(" | ")}`);
+    }
+  }
+  return sliced;
 }
 
 function rankTopFiveScored(
   raw: { loc: PwLocator; text: string }[],
-  musicQuery: string
-): { loc: PwLocator; text: string; score: number }[] {
-  return raw
+  musicQuery: string,
+  ctx?: FlowContext
+): { loc: PwLocator; text: string; score: number; index: number }[] {
+  const ranked = raw
     .filter((c) => !isBadSoundLabel(c.text))
     .map((c, index) => ({ ...c, index, score: scoreSoundMatch(musicQuery, c.text) }))
     .sort((a, b) => (b.score - a.score) || (a.index - b.index))
     .slice(0, 5);
+
+  if (ctx && ranked.length > 0) {
+    const qShort = musicQuery.trim().slice(0, 80);
+    const rows = ranked.map((r, rank) => {
+      const lbl = r.text.replace(/\s+/g, " ").trim();
+      const short = lbl.length > 70 ? `${lbl.slice(0, 70)}…` : lbl;
+      const why = explainSoundMatch(musicQuery, r.text);
+      return `#${rank + 1} score=${r.score.toFixed(0)} listPos=${r.index + 1} "${short}" (${why})`;
+    });
+    ctx.flow(`[music][audio] ranked vs query "${qShort}" (top ${ranked.length}): ${rows.join(" || ")}`);
+    const best = ranked[0];
+    const second = ranked[1];
+    const tieNote =
+      second && second.score === best.score
+        ? `tie on score ${best.score.toFixed(0)} — picked earlier list row (listPos ${best.index + 1} before ${second.index + 1})`
+        : `winner: highest score ${best.score.toFixed(0)}`;
+    ctx.flow(`[music][audio] pick: ${tieNote}`);
+  }
+
+  return ranked;
 }
 
 async function runSearchInPanel(
@@ -1445,7 +1512,7 @@ async function trySelectCachedSound(
   } catch {
     return null;
   }
-  const raw = await harvestSoundCandidates(workingPanel.panelRoot);
+  const raw = await harvestSoundCandidates(workingPanel.panelRoot, ctx);
   if (raw.length === 0) return null;
   const cl = cached.label.toLowerCase();
   const prefer = raw.find(
@@ -1453,8 +1520,13 @@ async function trySelectCachedSound(
       r.text.toLowerCase().includes(cl) ||
       (cl.length > 6 && cl.includes(r.text.toLowerCase().slice(0, Math.min(40, r.text.length))))
   );
-  if (prefer) return { loc: prefer.loc, text: prefer.text };
-  const ranked = rankTopFiveScored(raw, cached.label);
+  if (prefer) {
+    ctx.flow(
+      `[music][audio] cache path: picked row whose text overlaps cached label (no re-rank): "${prefer.text.replace(/\s+/g, " ").slice(0, 80)}"`
+    );
+    return { loc: prefer.loc, text: prefer.text };
+  }
+  const ranked = rankTopFiveScored(raw, cached.label, ctx);
   if (ranked.length === 0) return null;
   if (ranked[0].score >= MUSIC_PRIMARY_MIN_SCORE) return { loc: ranked[0].loc, text: ranked[0].text };
   return null;
@@ -1482,7 +1554,7 @@ async function pickBestSoundFromPanel(
   })();
 
   const pickRelaxedFromPanel = async (): Promise<{ loc: PwLocator; text: string } | null> => {
-    const raw = await harvestSoundCandidates(wp.panelRoot);
+    const raw = await harvestSoundCandidates(wp.panelRoot, ctx);
     for (const c of raw) {
       throwIfAborted(signal);
       const t = (c.text || "").replace(/\s+/g, " ").trim();
@@ -1523,23 +1595,20 @@ async function pickBestSoundFromPanel(
       }
 
       const noResults = await isNoSoundResults(wp.panelRoot);
-      const raw = await harvestSoundCandidates(wp.panelRoot);
+      const raw = await harvestSoundCandidates(wp.panelRoot, ctx);
       if (noResults || raw.length === 0) {
         ctx.flow("[music] primary search failed → switching to fallback");
         primaryFailed = true;
       } else {
-        const ranked = rankTopFiveScored(raw, q);
+        const ranked = rankTopFiveScored(raw, q, ctx);
         if (ranked.length === 0) {
           ctx.flow("[music] primary search failed → switching to fallback");
           primaryFailed = true;
         } else {
-          ctx.flow(
-            `[music] top matches (scored vs user query): ${ranked
-              .map((r) => `${r.score.toFixed(0)}:"${r.text.slice(0, 36)}"`)
-              .join(" · ")}`
-          );
           if (ranked[0].score >= MUSIC_PRIMARY_MIN_SCORE) {
-            console.log("[MUSIC] Selecting best match:", ranked[0].text.slice(0, 100));
+            ctx.flow(
+              `[music][audio] primary search: score ${ranked[0].score.toFixed(0)} ≥ ${MUSIC_PRIMARY_MIN_SCORE} — using this row`
+            );
             return { loc: ranked[0].loc, text: ranked[0].text };
           }
           ctx.flow("[music] primary search failed → switching to fallback");
@@ -1617,31 +1686,28 @@ async function pickBestSoundFromPanel(
         await waitForSoundResultsInRoot(page, wp.panelRoot, 20000, signal);
       }
 
-      const raw = await harvestSoundCandidates(wp.panelRoot);
+      const raw = await harvestSoundCandidates(wp.panelRoot, ctx);
       if (raw.length === 0) {
         ctx.flow(`[music] no candidate rows (term index ${si})`);
         continue;
       }
 
-      const ranked = rankTopFiveScored(raw, q);
+      const ranked = rankTopFiveScored(raw, q, ctx);
       if (ranked.length === 0) {
         ctx.flow(`[music] all candidates filtered as bad sounds (term index ${si})`);
         continue;
       }
-      ctx.flow(
-        `[music] top matches (scored vs user query): ${ranked.map((r) => `${r.score.toFixed(0)}:"${r.text.slice(0, 36)}"`).join(" · ")}`
-      );
 
       if (si === 0) {
         if (ranked[0].score >= MUSIC_PRIMARY_MIN_SCORE) {
-          console.log("[MUSIC] Selecting best match:", ranked[0].text.slice(0, 100));
+          ctx.flow(`[music][audio] term index ${si}: best score ${ranked[0].score.toFixed(0)} ≥ ${MUSIC_PRIMARY_MIN_SCORE} — selecting`);
           return { loc: ranked[0].loc, text: ranked[0].text };
         }
         ctx.flow(`[music] weak primary (best ${ranked[0].score.toFixed(0)} < ${MUSIC_PRIMARY_MIN_SCORE}) → trending / viral`);
         continue;
       }
 
-      console.log("[MUSIC] Selecting best after region fallback:", ranked[0].text.slice(0, 100));
+      ctx.flow(`[music][audio] fallback term index ${si}: selecting best-scored row after extra search`);
       return { loc: ranked[0].loc, text: ranked[0].text };
     } catch (e) {
       if (isClosedTargetError(e)) {
@@ -1659,7 +1725,9 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
   const patterns = [/use this sound/i, /use sound/i, /^confirm$/i, /^done$/i, /confirm/i, /done/i];
   const deadline = Date.now() + timeoutMs;
   const frontDialog = page.locator('[role="dialog"]:visible').last();
-  ctx.flow("[music] apply: looking for Use/Confirm/Done button");
+  ctx.flow(
+    "[music][audio] apply pass: poll for Save / Use sound / Confirm / Done / dialog PlusBold (after row selection)"
+  );
 
   while (Date.now() < deadline) {
     const plusInDialog = frontDialog
@@ -1667,20 +1735,22 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
       .first();
     if ((await plusInDialog.isVisible().catch(() => false)) && !(await plusInDialog.isDisabled().catch(() => true))) {
       await plusInDialog.click({ force: true }).catch(() => {});
-      ctx.flow("[music] apply: clicked Plus button (dialog)");
+      ctx.flow(
+        "[music][audio] clicked: PlusBold in front visible dialog — TikTok sometimes needs this before Save/Use"
+      );
       await page.waitForTimeout(250);
     }
 
     const saveInDialog = frontDialog.getByRole("button", { name: /^save$/i }).first();
     if ((await saveInDialog.isVisible().catch(() => false)) && !(await saveInDialog.isDisabled().catch(() => true))) {
       await saveInDialog.click({ force: true }).catch(() => {});
-      ctx.flow("[music] apply: clicked Save button (dialog)");
+      ctx.flow("[music][audio] clicked: Save in front dialog — confirms sound choice in modal");
       return true;
     }
     const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
     if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
       await saveGlobal.click({ force: true }).catch(() => {});
-      ctx.flow("[music] apply: clicked Save button (global)");
+      ctx.flow("[music][audio] clicked: Save (first global) — modal may be detached from dialog locator");
       return true;
     }
 
@@ -1689,20 +1759,24 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
       if ((await scoped.isVisible().catch(() => false)) && !(await scoped.isDisabled().catch(() => true))) {
         ctx.debug(`[music] apply (in dialog) ${re.source}`);
         await scoped.click({ force: true });
-        ctx.flow(`[music] apply: clicked dialog button /${re.source}/i`);
+        ctx.flow(
+          `[music][audio] clicked: dialog role=button name≈/${re.source}/i — primary apply action for this build`
+        );
         return true;
       }
       const btn = page.getByRole("button", { name: re }).first();
       if ((await btn.isVisible().catch(() => false)) && !(await btn.isDisabled().catch(() => true))) {
         ctx.debug(`[music] apply (global) ${re.source}`);
         await btn.click({ force: true });
-        ctx.flow(`[music] apply: clicked global button /${re.source}/i`);
+        ctx.flow(
+          `[music][audio] clicked: global role=button name≈/${re.source}/i — fallback when not scoped to dialog`
+        );
         return true;
       }
     }
     await page.waitForTimeout(300);
   }
-  ctx.flow("[music] apply: no explicit button found before timeout");
+  ctx.flow("[music][audio] apply: no Save/Use/Confirm/PlusBold matched within timeout — one-step UI or manual");
   return false;
 }
 
@@ -1746,19 +1820,24 @@ async function tryQuickAddAndSaveAfterSearch(
 ): Promise<boolean> {
   // TikTok often renders rows / Plus buttons a bit after the query is set.
   await page.waitForTimeout(humanRand(900, 1700));
-  const raw = await harvestSoundCandidates(panelRoot);
-  const ranked = rankTopFiveScored(raw, musicQuery);
+  const raw = await harvestSoundCandidates(panelRoot, ctx);
+  const ranked = rankTopFiveScored(raw, musicQuery, ctx);
   if (ranked.length === 0) {
     ctx.flow("[music] quick add: no usable candidates");
     return false;
   }
 
   const best = ranked[0];
-  ctx.flow(`[music] quick add candidate: ${best.score.toFixed(0)}:"${best.text.slice(0, 72)}"`);
   if (best.score < MUSIC_QUICK_ADD_MIN_SCORE) {
-    ctx.flow(`[music] quick add skipped: weak match (${best.score.toFixed(0)} < ${MUSIC_QUICK_ADD_MIN_SCORE})`);
+    ctx.flow(
+      `[music][audio] quick-add skipped: best score ${best.score.toFixed(0)} < ${MUSIC_QUICK_ADD_MIN_SCORE}`
+    );
     return false;
   }
+
+  ctx.flow(
+    `[music][audio] quick-add: PlusBold on best row (rank #1) then Save — "${best.text.replace(/\s+/g, " ").slice(0, 80)}"`
+  );
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1769,20 +1848,22 @@ async function tryQuickAddAndSaveAfterSearch(
       .first();
     if ((await plusInPanel.isVisible().catch(() => false)) && !(await plusInPanel.isDisabled().catch(() => true))) {
       await plusInPanel.click({ force: true }).catch(() => {});
-      ctx.flow("[music] quick add: clicked Plus on best-matching row");
+      ctx.flow(
+        "[music][audio] quick-add: clicked PlusBold inside best row locator (not global) — adds that sound"
+      );
       await page.waitForTimeout(250);
 
       const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
       if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
         await saveInPanel.click({ force: true }).catch(() => {});
-        ctx.flow("[music] quick add: clicked Save in panel");
+        ctx.flow("[music][audio] quick-add: clicked Save in sound panel");
         return true;
       }
 
       const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
       if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
         await saveGlobal.click({ force: true }).catch(() => {});
-        ctx.flow("[music] quick add: clicked Save globally");
+        ctx.flow("[music][audio] quick-add: clicked Save (global role=button)");
         return true;
       }
     }
@@ -1790,7 +1871,7 @@ async function tryQuickAddAndSaveAfterSearch(
     await page.waitForTimeout(250);
   }
 
-  ctx.flow("[music] quick add: Plus/Save not found in time");
+  ctx.flow("[music][audio] quick-add: PlusBold on best row or Save not found in time");
   return false;
 }
 
@@ -1808,6 +1889,9 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
     throwIfAborted(signal);
     const plusBtns = panelRoot.locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])');
     const n = await plusBtns.count().catch(() => 0);
+    if (n > 0) {
+      ctx.flow(`[music][audio] relaxed quick-add: found ${n} PlusBold button(s) in panel (trying first visible, index order 0..13)`);
+    }
     for (let i = 0; i < Math.min(n, 14); i++) {
       const plus = plusBtns.nth(i);
       const visible = await plus.isVisible().catch(() => false);
@@ -1821,20 +1905,22 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
       const pickedText = ((await row.first().innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
 
       await plus.click({ force: true }).catch(() => {});
-      ctx.flow("[music] quick add relaxed: clicked Plus");
+      ctx.flow(
+        `[music][audio] relaxed quick-add: clicked PlusBold #${i + 1}/${n} (0-based index ${i}); row text preview "${pickedText.slice(0, 90)}${pickedText.length > 90 ? "…" : ""}"`
+      );
       await page.waitForTimeout(250);
 
       const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
       if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
         await saveInPanel.click({ force: true }).catch(() => {});
-        ctx.flow("[music] quick add relaxed: clicked Save in panel");
+        ctx.flow("[music][audio] relaxed quick-add: Save in panel after Plus");
         return { ok: true, pickedText: pickedText || undefined };
       }
 
       const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
       if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
         await saveGlobal.click({ force: true }).catch(() => {});
-        ctx.flow("[music] quick add relaxed: clicked Save globally");
+        ctx.flow("[music][audio] relaxed quick-add: Save global after Plus");
         return { ok: true, pickedText: pickedText || undefined };
       }
     }
@@ -1842,7 +1928,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
     await page.waitForTimeout(250);
   }
 
-  ctx.flow("[music] quick add relaxed: Plus/Save not found in time");
+  ctx.flow("[music][audio] relaxed quick-add: no PlusBold+Save combo worked in time");
   return { ok: false };
 }
 
@@ -1859,7 +1945,7 @@ async function executeOneSoundAttempt(
   const openBtn = await findAddSoundButton(page, ctx);
   if (!openBtn) throw new Error("Add sound control not found");
 
-  console.log("[MUSIC] Opening sound panel");
+  ctx.flow("[music][audio] opening sound panel: clicking Add sound control from composer (see earlier [music] open lines)");
   await openBtn.click({ force: true });
   ctx.flow("[music] open: clicked sound control");
   await dismissStopCopyrightDialog(page, ctx, "after-open-sound-click");
@@ -1950,11 +2036,13 @@ async function executeOneSoundAttempt(
     pick = await pickBestSoundFromPanel(page, workingPanel, q, ctx, signal);
   }
   if (!pick) throw new Error("No sound row selected");
-  ctx.flow(`[music] selecting row: "${pick.text.slice(0, 120)}"`);
+  ctx.flow(
+    `[music][audio] scored flow: activating row "${pick.text.replace(/\s+/g, " ").slice(0, 120)}" (click row root first)`
+  );
 
   await pick.loc.scrollIntoViewIfNeeded().catch(() => {});
   await pick.loc.click({ force: true });
-  ctx.flow("[music] row clicked");
+  ctx.flow("[music][audio] clicked: sound row root (data-e2e sound row or option) — selects/highlight row");
 
   // Let TikTok update the row state before trying to click +/apply.
   await page.waitForTimeout(humanRand(650, 1200));
@@ -1968,11 +2056,13 @@ async function executeOneSoundAttempt(
     .first();
   const plusVisible = await plusInRow.isVisible().catch(() => false);
   const plusDisabled = await plusInRow.isDisabled().catch(() => true);
-  ctx.flow(`[music] row plus: visible=${plusVisible} disabled=${plusDisabled}`);
+  ctx.flow(
+    `[music][audio] in-row PlusBold: visible=${plusVisible} disabled=${plusDisabled} — if visible, click adds this row's sound (avoids wrong global Plus)`
+  );
   if (plusVisible && !plusDisabled) {
     await page.waitForTimeout(humanRand(650, 1200));
     await plusInRow.click({ force: true }).catch(() => {});
-    ctx.flow("[music] row plus clicked");
+    ctx.flow("[music][audio] clicked: PlusBold inside same row locator — adds audio from that row");
     await page.waitForTimeout(250);
   }
 
@@ -1981,7 +2071,7 @@ async function executeOneSoundAttempt(
   await page.waitForTimeout(500);
   const appliedBtn = await clickApplySoundIfPresent(page, ctx, 10000);
   if (!appliedBtn) {
-    ctx.flow("[music] no explicit apply button — may be single-step");
+    ctx.flow("[music][audio] no explicit Save/Use after row — TikTok may apply on row+Plus only");
   }
 
   const ok = await verifySoundAppliedStrict(page, q, ctx, pick.text);
@@ -2036,8 +2126,7 @@ async function tryAddSoundToVideo(
         r = await executeOneSoundAttempt(page, q, ctx, accountUsername, signal);
       }
       if (r.ok && r.soundLabel) {
-        console.log("[MUSIC] Sound applied:", r.soundLabel);
-        ctx.flow(`[music] final applied sound: "${r.soundLabel.slice(0, 120)}"`);
+        ctx.flow(`[music][audio] verified applied sound title/row: "${r.soundLabel.slice(0, 120)}"`);
         if (flowDebugOn()) {
           await musicDebugShot(ctx, page, "step-music-verified.png");
           ctx.debug("[music] probe after success");
