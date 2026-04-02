@@ -53,6 +53,17 @@ Alternatively use **SSH X11 forwarding** (`ssh -X`) or **VNC** so `DISPLAY` is s
 | `PLAYWRIGHT_CHROMIUM_ARGS` | Extra space-separated Chromium flags. |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Custom Chromium/Chrome binary path. |
 | `PLAYWRIGHT_CHANNEL` | e.g. `chrome` to use installed Google Chrome. |
+| `TIKTOK_PROXY_TRAFFIC_LOG` | Set `1` to log **estimated** proxy egress per upload (sums `Content-Length` on responses, top hostnames, resource types, main-frame navigations, and main `goto` time). Chunked responses without length are not counted. |
+| `TIKTOK_BLOCK_NON_ESSENTIAL` | **Upload worker only.** When unset or `1`, blocks **fonts**, optional **images** (see below), known third-party trackers (Google Analytics / GTM / DoubleClick / Facebook pixel hosts), and **`beacon`** requests. Does **not** block `ttwstatic`, `effectcdn`, or music CDNs. Set `0` to disable all of this if Studio misbehaves. |
+| `TIKTOK_BLOCK_STUDIO_IMAGES` | Only used when `TIKTOK_BLOCK_NON_ESSENTIAL` is on. Default blocks most **images** except URLs that look music-related (`ies-music`, `/music`, etc.). Set `0` to load all images again (still blocks fonts + trackers). |
+| `HUMAN_TIMING_SCALE` | Multiplier for **human-like** pauses in the upload flow (`humanPause`, `scaledHumanRand`, `humanScroll`, caption typing). Default **`0.72`** (~28% shorter). Set **`1`** to restore previous pacing. |
+| `TIKTOK_REUSE_UPLOAD_CONTEXT` | When **not** `0`/`false` (default: **on**), successful uploads **return the Playwright `BrowserContext` to a pool** keyed by account + proxy. The **next** upload for the same account/proxy reuses it so **JS/effect chunks hit HTTP cache** and proxy download drops a lot on repeat runs. Set `0` for a fresh context every time. Only applies when a **shared** browser is used (Mongo runner / queue workers). |
+| `TIKTOK_UPLOAD_CONTEXT_POOL_MAX` | Max pooled contexts (default **16**). Oldest evicted when full. |
+| `UPLOAD_VIDEO_FFMPEG` | Set `1` / `true` to run **FFmpeg** before upload: H.264 ~720p wide, CRF 28, AAC 96k — **smaller file = less upload bytes** through the proxy. Requires `ffmpeg` on `PATH`. If FFmpeg fails, the original file is used. |
+| `UPLOAD_FFMPEG_CRF` | Video quality when FFmpeg is on (default **28**; higher = smaller file). |
+| `UPLOAD_FFMPEG_MAX_WIDTH` | Max width in px (default **720**). |
+| `UPLOAD_GOTO_RETRIES` | Retries for the **first** `page.goto` to TikTok Studio when the proxy tunnel fails (`net::ERR_TUNNEL_CONNECTION_FAILED`, etc.). Default **3**. |
+| `UPLOAD_GOTO_RETRY_DELAY_MS` | Pause between those retries (default **5000** ms). |
 
 If you cannot run a browser on the server, paste **Playwright `storageState` JSON** on the Accounts page instead of using **Capture session**.
 

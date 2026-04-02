@@ -9,6 +9,7 @@ import { UploadModel } from "../lib/models/Upload";
 import { claimUploadBatch } from "../lib/mongoUploadClaim";
 import { getUploadParallelAdminCap } from "../lib/uploadParallelConfig";
 import { runUploadWithSession } from "../automation/uploadWorker";
+import { resolveOptimizedVideoPath } from "../lib/optimizeVideoForUpload";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 
 type PlaywrightProxyConfig = {
@@ -112,10 +113,12 @@ async function processOneUpload(upload: any, browser: import("playwright").Brows
         ? updated.musicQuery.trim()
         : undefined;
 
+    const videoForUpload = await resolveOptimizedVideoPath(videoPath);
+
     const result = await runUploadWithSession(
       (accountDoc as any).username,
       (accountDoc as any).session,
-      videoPath,
+      videoForUpload,
       caption,
       proxyConfig,
       browser,

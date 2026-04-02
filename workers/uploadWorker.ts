@@ -6,6 +6,7 @@ import { connectDB } from "../lib/db";
 import { AccountModel } from "../lib/models/Account";
 import { UploadModel } from "../lib/models/Upload";
 import { runUploadWithSession } from "../automation/uploadWorker";
+import { resolveOptimizedVideoPath } from "../lib/optimizeVideoForUpload";
 import { launchChromium } from "../lib/playwrightLaunch";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 import mongoose from "mongoose";
@@ -111,10 +112,11 @@ async function processUpload(job: Job<UploadJobPayload>) {
     );
 
     const activeBrowser = await getBrowser();
+    const videoForUpload = await resolveOptimizedVideoPath(videoPath);
     const result = await runUploadWithSession(
       username,
       session,
-      videoPath,
+      videoForUpload,
       caption,
       proxyConfig,
       activeBrowser,

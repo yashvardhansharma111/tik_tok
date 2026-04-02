@@ -10,6 +10,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { claimUploadBatch } from "@/lib/mongoUploadClaim";
 import { getUploadParallelAdminCap } from "@/lib/uploadParallelConfig";
 import { runUploadWithSession } from "@/automation/uploadWorker";
+import { resolveOptimizedVideoPath } from "@/lib/optimizeVideoForUpload";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
 
@@ -126,10 +127,12 @@ async function processUpload(upload: any, browser: Browser) {
       musicQuery: musicQuery || "(none)",
     });
 
+    const videoForUpload = await resolveOptimizedVideoPath(videoPath);
+
     const result = await runUploadWithSession(
       (accountDoc as any).username,
       (accountDoc as any).session,
-      videoPath,
+      videoForUpload,
       caption,
       proxyConfig,
       browser,

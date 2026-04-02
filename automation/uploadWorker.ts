@@ -1,4 +1,7 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
+import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
+import { makeUploadContextPoolKey, offerUploadContext, takeUploadContext } from "@/lib/uploadContextPool";
+import { attachProxyTrafficLog } from "@/lib/playwrightProxyTrafficLog";
 import { isTikTokSessionLoggedOut } from "@/lib/tiktokSessionHealth";
 import fs from "fs";
 import os from "os";
@@ -9,7 +12,7 @@ import {
   setCachedSound,
   type CachedSoundEntry,
 } from "@/lib/soundCache";
-import { humanPause, humanRand, humanScroll, typeTextLikeHuman } from "@/lib/humanBehavior";
+import { humanPause, humanScroll, scaledHumanRand, typeTextLikeHuman } from "@/lib/humanBehavior";
 
 const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en";
 
@@ -265,6 +268,43 @@ function createFlowContext(username: string): FlowContext {
   return { runId, debugDir, flow, debug, shot, pauseIfDebug };
 }
 
+/** Proxy/residential tunnels often fail once; these are worth retrying. */
+function isTransientProxyNavigationError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_CLOSED|ERR_CONNECTION_RESET|ERR_EMPTY_RESPONSE|ERR_TIMED_OUT|ERR_SSL_PROTOCOL_ERROR|ERR_ADDRESS_UNREACHABLE|ECONNRESET|ETIMEDOUT/i.test(
+    msg
+  );
+}
+
+/**
+ * First navigation to Studio — retries on flaky proxy tunnels (`net::ERR_TUNNEL_CONNECTION_FAILED`, etc.).
+ * Env: `UPLOAD_GOTO_RETRIES` (default 3), `UPLOAD_GOTO_RETRY_DELAY_MS` (default 5000).
+ */
+async function gotoTikTokUploadWithRetries(page: Page, ctx: FlowContext, url: string): Promise<void> {
+  const max = Math.max(1, Math.min(6, Number(process.env.UPLOAD_GOTO_RETRIES || 3)));
+  const delayMs = Math.max(300, Number(process.env.UPLOAD_GOTO_RETRY_DELAY_MS || 5000));
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= max; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "commit", timeout: 90000 });
+      if (attempt > 1) ctx.flow(`navigation OK on attempt ${attempt}/${max}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      const retryable = attempt < max && isTransientProxyNavigationError(e);
+      const detail = e instanceof Error ? e.message : String(e);
+      ctx.flow(
+        retryable
+          ? `navigate attempt ${attempt}/${max} failed (${detail}) — retrying in ${delayMs}ms`
+          : `navigate attempt ${attempt}/${max} failed (${detail})`
+      );
+      if (!retryable) throw e;
+      await page.waitForTimeout(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
 async function describeFirstVisible(loc: import("playwright").Locator, ctx: FlowContext): Promise<string> {
   const n = await loc.count();
   if (n === 0) return "(none)";
@@ -382,7 +422,7 @@ async function waitForCaptionEditorVisible(
       await humanScroll(page);
       await humanPause(page);
     }
-    await page.waitForTimeout(humanRand(2200, 3400));
+    await page.waitForTimeout(scaledHumanRand(2200, 3400));
   }
   ctx.flow("caption editor NOT visible within timeout");
   return null;
@@ -1117,7 +1157,7 @@ async function clickSuggestionFromDom(
 
   ctx.flow(`[music] suggestion clicked via DOM: "${(domSuggestions.text || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
-  await page.waitForTimeout(humanRand(700, 1200));
+  await page.waitForTimeout(scaledHumanRand(700, 1200));
   return true;
 }
 
@@ -1178,7 +1218,7 @@ async function tryClickMatchingSuggestion(
     return false;
   }
 
-  await page.waitForTimeout(humanRand(220, 520));
+  await page.waitForTimeout(scaledHumanRand(220, 520));
 let clickable = best.loc.locator(
   'button, [role="button"]'
 ).first();
@@ -1204,7 +1244,7 @@ try {
   const afterClickValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] suggestion click -> input value now: "${(afterClickValue || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
-  await page.waitForTimeout(humanRand(700, 1200));
+  await page.waitForTimeout(scaledHumanRand(700, 1200));
   return true;
 }
 
@@ -1306,7 +1346,7 @@ async function runSearchInPanel(
   const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
   await searchInput.press(selectAll).catch(() => {});
   await searchInput.press("Backspace").catch(() => {});
-  await page.waitForTimeout(humanRand(180, 320));
+  await page.waitForTimeout(scaledHumanRand(180, 320));
 
   const isLongOrIdLike = term.length >= 26 || /\d{8,}/.test(term) || (term.includes("-") && /\d/.test(term));
   if (isLongOrIdLike) {
@@ -1314,14 +1354,14 @@ async function runSearchInPanel(
     ctx.flow(`[music] search (fast fill): "${short}"`);
     await searchInput.fill(term).catch(async () => {
       // Some Studio builds block fill(); fall back to typing quickly.
-      await searchInput.type(term, { delay: humanRand(5, 18) });
+      await searchInput.type(term, { delay: scaledHumanRand(5, 18) });
     });
-    await page.waitForTimeout(humanRand(450, 850));
+    await page.waitForTimeout(scaledHumanRand(450, 850));
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
-    await page.waitForTimeout(humanRand(900, 1500));
+    await page.waitForTimeout(scaledHumanRand(900, 1500));
     await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(humanRand(220, 420));
+    await page.waitForTimeout(scaledHumanRand(220, 420));
     await page.keyboard.press("Escape").catch(() => {});
     await panelRoot.click({ force: true }).catch(() => {});
     return;
@@ -1333,25 +1373,25 @@ async function runSearchInPanel(
     throwIfAborted(signal);
     const ch = term[i];
     // TikTok suggestions/results can be flaky if we type too fast.
-    await searchInput.type(ch, { delay: humanRand(25, 70) });
+    await searchInput.type(ch, { delay: scaledHumanRand(25, 70) });
     typed += ch;
-    await page.waitForTimeout(humanRand(220, 420));
+    await page.waitForTimeout(scaledHumanRand(220, 420));
 
     const trimmed = typed.trim();
     if (trimmed.length < 6) continue;
     const shouldProbe = /\s/.test(ch) || i === term.length - 1 || i % 4 === 3;
     if (!shouldProbe) continue;
 
-    await page.waitForTimeout(humanRand(260, 520));
+    await page.waitForTimeout(scaledHumanRand(260, 520));
     const clickedSuggestion = await tryClickMatchingSuggestion(page, searchInput, panelRoot, term, trimmed, ctx);
     if (clickedSuggestion) {
       // Submit to ensure results load and suggestion dropdown collapses.
       await searchInput.press("Enter").catch(() => {});
       await page.keyboard.press("Enter").catch(() => {});
       ctx.flow("[music] search: pressed Enter after suggestion click");
-      await page.waitForTimeout(humanRand(650, 1100));
+      await page.waitForTimeout(scaledHumanRand(650, 1100));
       await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(humanRand(220, 420));
+      await page.waitForTimeout(scaledHumanRand(220, 420));
       await page.keyboard.press("Escape").catch(() => {});
       await panelRoot.click({ force: true }).catch(() => {});
       return;
@@ -1369,20 +1409,20 @@ async function runSearchInPanel(
   const typedValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] search input value now: "${(typedValue || "").slice(0, 80)}"`);
   // Give TikTok a moment to populate results after the full query is present.
-  await page.waitForTimeout(humanRand(1600, 2600));
-  await page.waitForTimeout(humanRand(700, 1200));
+  await page.waitForTimeout(scaledHumanRand(1600, 2600));
+  await page.waitForTimeout(scaledHumanRand(700, 1200));
   // Always submit the query with Enter to collapse the suggestions dropdown.
   await searchInput.press("Enter").catch(() => {});
   await page.keyboard.press("Enter").catch(() => {});
   ctx.flow("[music] search: pressed Enter");
-  await page.waitForTimeout(humanRand(650, 1100));
+  await page.waitForTimeout(scaledHumanRand(650, 1100));
 
   // If still no visible results and no explicit "no results" message, press Enter again.
   if (!(await panelHasVisibleSoundResults(panelRoot)) && !(await panelShowsNoResults(panelRoot))) {
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
     ctx.flow("[music] search: pressed Enter fallback");
-    await page.waitForTimeout(humanRand(900, 1500));
+    await page.waitForTimeout(scaledHumanRand(900, 1500));
   }
 
   // Suggestions dropdown can overlay the results list (and Plus buttons) — dismiss it.
@@ -1819,7 +1859,7 @@ async function tryQuickAddAndSaveAfterSearch(
   timeoutMs: number
 ): Promise<boolean> {
   // TikTok often renders rows / Plus buttons a bit after the query is set.
-  await page.waitForTimeout(humanRand(900, 1700));
+  await page.waitForTimeout(scaledHumanRand(900, 1700));
   const raw = await harvestSoundCandidates(panelRoot, ctx);
   const ranked = rankTopFiveScored(raw, musicQuery, ctx);
   if (ranked.length === 0) {
@@ -1882,7 +1922,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
   timeoutMs: number,
   signal?: AbortSignal
 ): Promise<{ ok: boolean; pickedText?: string }> {
-  await page.waitForTimeout(humanRand(900, 1700));
+  await page.waitForTimeout(scaledHumanRand(900, 1700));
   await page.keyboard.press("Escape").catch(() => {});
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2045,7 +2085,7 @@ async function executeOneSoundAttempt(
   ctx.flow("[music][audio] clicked: sound row root (data-e2e sound row or option) — selects/highlight row");
 
   // Let TikTok update the row state before trying to click +/apply.
-  await page.waitForTimeout(humanRand(650, 1200));
+  await page.waitForTimeout(scaledHumanRand(650, 1200));
 
   // Some TikTok Studio variants require clicking the row's Plus button instead of the row itself.
   // Try it opportunistically before looking for global/dialog apply buttons.
@@ -2060,7 +2100,7 @@ async function executeOneSoundAttempt(
     `[music][audio] in-row PlusBold: visible=${plusVisible} disabled=${plusDisabled} — if visible, click adds this row's sound (avoids wrong global Plus)`
   );
   if (plusVisible && !plusDisabled) {
-    await page.waitForTimeout(humanRand(650, 1200));
+    await page.waitForTimeout(scaledHumanRand(650, 1200));
     await plusInRow.click({ force: true }).catch(() => {});
     ctx.flow("[music][audio] clicked: PlusBold inside same row locator — adds audio from that row");
     await page.waitForTimeout(250);
@@ -2122,7 +2162,7 @@ async function tryAddSoundToVideo(
       if (!r.ok && musicRetry) {
         ctx.flow("[music] verification failed — retry once (TIKTOK_MUSIC_RETRY=1)");
         await dismissOpenSoundUi(page, ctx);
-        await humanPause(page, 1800, 3200);
+        await humanPause(page, 1400, 2600);
         r = await executeOneSoundAttempt(page, q, ctx, accountUsername, signal);
       }
       if (r.ok && r.soundLabel) {
@@ -2287,7 +2327,7 @@ async function turnOffCopyrightAndContentCheckToggles(
         }
       }
 
-      await page.waitForTimeout(humanRand(2200, 3800));
+      await page.waitForTimeout(scaledHumanRand(2200, 3800));
     }
     if (!switchedOff) {
       log(`toggles: failed to turn off ${pattern}`);
@@ -2320,10 +2360,22 @@ export async function runUploadWithSession(
   const ctx = createFlowContext(username);
   let soundUsed: string | undefined;
   const tmpFile = path.join(os.tmpdir(), `tiktok-${username.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.json`);
-  fs.writeFileSync(tmpFile, sessionJson, "utf-8");
 
   let localBrowser: import("playwright").Browser | undefined;
   let context: import("playwright").BrowserContext | undefined;
+  let trafficLog: ReturnType<typeof attachProxyTrafficLog> = null;
+  let mainGotoMs: number | undefined;
+  let outcome: TikTokUploadRunResult | undefined;
+  let reuseEnabled = false;
+  let poolKey = "";
+  let wroteTmpSession = false;
+  let contextFromPool = false;
+
+  function done(r: TikTokUploadRunResult): TikTokUploadRunResult {
+    outcome = r;
+    return r;
+  }
+
   try {
     if (browser) {
       localBrowser = undefined;
@@ -2343,26 +2395,54 @@ export async function runUploadWithSession(
           ? proxy
           : undefined;
 
-    context = await activeBrowser.newContext({
-      storageState: tmpFile,
-      userAgent,
-      ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
-    });
+    reuseEnabled =
+      !!browser &&
+      process.env.TIKTOK_REUSE_UPLOAD_CONTEXT !== "0" &&
+      process.env.TIKTOK_REUSE_UPLOAD_CONTEXT !== "false";
+    poolKey = makeUploadContextPoolKey(username, resolvedProxy);
+
+    if (reuseEnabled) {
+      const pooled = takeUploadContext(poolKey);
+      if (pooled) {
+        context = pooled;
+        contextFromPool = true;
+        ctx.flow("reusing pooled browser context (warm cache)");
+        for (const p of context.pages()) {
+          await p.close().catch(() => {});
+        }
+      }
+    }
+
+    if (!context) {
+      fs.writeFileSync(tmpFile, sessionJson, "utf-8");
+      wroteTmpSession = true;
+      context = await activeBrowser.newContext({
+        storageState: tmpFile,
+        userAgent,
+        ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+      });
+      await installSafeBandwidthRoutes(context);
+    }
+
     const page = await context.newPage();
+    trafficLog = attachProxyTrafficLog(page, `tiktok-upload:${username}`);
 
     ctx.flow(`navigate → ${TIKTOK_UPLOAD_URL}`);
-    await page.goto(TIKTOK_UPLOAD_URL, { waitUntil: "commit", timeout: 90000 });
+    const tGoto = Date.now();
+    await gotoTikTokUploadWithRetries(page, ctx, TIKTOK_UPLOAD_URL);
+    mainGotoMs = Date.now() - tGoto;
+    ctx.flow(`navigation commit timing: ${mainGotoMs}ms`);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     ctx.flow("navigation committed + domcontentloaded (best-effort)");
 
     if (await isTikTokSessionLoggedOut(page)) {
       await ctx.shot(page, "session-expired-or-logged-out.png");
-      return {
+      return done({
         success: false,
         error:
           "SESSION_EXPIRED: TikTok session missing or expired. Re-import storageState JSON on Accounts (local capture or browser export).",
         soundUsed: undefined,
-      };
+      });
     }
 
     ctx.flow("human: pause + scroll after load");
@@ -2372,7 +2452,7 @@ export async function runUploadWithSession(
     const inputOk = await waitForFileInput(page, ctx, 90000);
     if (!inputOk) {
       await ctx.shot(page, "step-1-open-page-failed-no-input.png");
-      return { success: false, error: "Upload file input not found", soundUsed: undefined };
+      return done({ success: false, error: "Upload file input not found", soundUsed: undefined });
     }
 
     await logCoreElements(page, ctx);
@@ -2391,7 +2471,7 @@ export async function runUploadWithSession(
     for (let i = 0; i < 5; i++) {
       await dismissAutomaticContentChecksOfferDialog(page, ctx, `post-set-input-${i}`);
       await dismissStopCopyrightDialog(page, ctx, `post-set-input-${i}`);
-      await page.waitForTimeout(humanRand(650, 1200));
+      await page.waitForTimeout(scaledHumanRand(650, 1200));
     }
 
     await logUploadProgressHints(page, ctx);
@@ -2411,7 +2491,7 @@ export async function runUploadWithSession(
       await humanPause(page);
       await humanScroll(page);
       await captionBox.click({ force: true });
-      await page.waitForTimeout(humanRand(400, 900));
+      await page.waitForTimeout(scaledHumanRand(400, 900));
       await captionBox.fill("");
       await typeTextLikeHuman(page, captionBox, caption);
       ctx.flow("caption filled");
@@ -2449,7 +2529,7 @@ export async function runUploadWithSession(
     const postBtn = await waitForPostButtonEnabled(page, ctx, 180000);
     if (!postBtn) {
       await ctx.shot(page, "step-4-post-never-enabled.png");
-      return { success: false, error: "Post button not active", soundUsed };
+      return done({ success: false, error: "Post button not active", soundUsed });
     }
 
     ctx.flow("toggles: final pass before Post");
@@ -2466,14 +2546,14 @@ export async function runUploadWithSession(
     // Some Studio variants show a confirmation dialog (Continue/Post/Post now/etc).
     await clickPostConfirmDialogsIfPresent(page, ctx, 12000);
 
-    await humanPause(page, 3500, 5500);
+    await humanPause(page, 2400, 4000);
 
     const postNow = page.locator(TIKTOK_STUDIO_SELECTORS.postNowConfirm).first();
     if (await postNow.isVisible().catch(() => false)) {
       ctx.flow('confirm modal: "Post now"');
-      await humanPause(page, 1500, 2800);
+      await humanPause(page, 1000, 1800);
       await postNow.click({ force: true });
-      await humanPause(page, 2500, 4200);
+      await humanPause(page, 1600, 2800);
     }
 
     // Re-check late confirmations.
@@ -2481,44 +2561,59 @@ export async function runUploadWithSession(
 
     if (await detectPostRejectedByTikTok(page, ctx)) {
       await ctx.shot(page, "step-post-rejected-modal.png");
-      return {
+      return done({
         success: false,
         error: "TikTok blocked post (Community Guidelines / suspicious activity)",
         soundUsed,
-      };
+      });
     }
 
-    await humanPause(page, 5000, 8000);
+    await humanPause(page, 3200, 5200);
 
     if (await detectPostRejectedByTikTok(page, ctx)) {
       await ctx.shot(page, "step-post-rejected-modal-late.png");
-      return {
+      return done({
         success: false,
         error: "TikTok blocked post (Community Guidelines / suspicious activity)",
         soundUsed,
-      };
+      });
     }
 
     await ctx.shot(page, "step-5-after-post.png");
     ctx.flow("flow complete");
-    return { success: true, soundUsed };
+    return done({ success: true, soundUsed });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Upload failed";
     if (isClosedTargetError(e)) {
       ctx.flow("error: page/context/browser closed");
-      return { success: false, error: "BROWSER_CLOSED", soundUsed };
+      return done({ success: false, error: "BROWSER_CLOSED", soundUsed });
     }
     ctx.flow(`error: ${msg}`);
-    return { success: false, error: msg, soundUsed };
+    return done({ success: false, error: msg, soundUsed });
   } finally {
     try {
-      if (context) await context.close();
+      trafficLog?.finish({ mainGotoMs, mainGotoUrl: TIKTOK_UPLOAD_URL });
+    } catch {}
+    try {
+      if (context) {
+        const shouldPool =
+          outcome?.success === true &&
+          reuseEnabled &&
+          !!browser &&
+          !outcome.error?.includes("SESSION_EXPIRED");
+        if (shouldPool) {
+          offerUploadContext(poolKey, context);
+          context = undefined;
+        } else {
+          await context.close();
+        }
+      }
     } catch {}
     try {
       if (localBrowser) await localBrowser.close();
     } catch {}
     try {
-      fs.unlinkSync(tmpFile);
+      if (wroteTmpSession) fs.unlinkSync(tmpFile);
     } catch {}
   }
 }
