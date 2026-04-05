@@ -4,16 +4,32 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
+import { AccountsListExplain } from "@/components/AccountsListExplain";
+import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 
 type Account = { id: string; username: string; hasSession?: boolean };
 
+type AccountQuota = {
+  linkedCount: number;
+  maxLinkedAccounts: number | null;
+  canAddMore: boolean;
+};
+
 export default function UploadPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountQuota, setAccountQuota] = useState<AccountQuota | null>(null);
+  const [accountsListInfo, setAccountsListInfo] = useState<{
+    totalInDatabase: number;
+    listScope: "owner_only" | "all_in_database";
+  } | null>(null);
   const [caption, setCaption] = useState("");
   const [musicQuery, setMusicQuery] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [parallelism, setParallelism] = useState(4);
+  const [staggerSeconds, setStaggerSeconds] = useState(0);
+  const [scheduledStartAt, setScheduledStartAt] = useState("");
+  const [uniqueCaptionPerAccount, setUniqueCaptionPerAccount] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -40,14 +56,38 @@ export default function UploadPage() {
         return;
       }
       const data = await r.json();
-      if (r.ok)
+      if (r.ok) {
+        const list = Array.isArray(data) ? data : data.accounts ?? [];
         setAccounts(
-          data.map((a: any) => ({
+          list.map((a: any) => ({
             id: a.id,
             username: a.username,
             hasSession: a.hasSession,
           }))
         );
+        if (typeof data.totalInDatabase === "number" && (data.listScope === "owner_only" || data.listScope === "all_in_database")) {
+          setAccountsListInfo({ totalInDatabase: data.totalInDatabase, listScope: data.listScope });
+        } else {
+          setAccountsListInfo(null);
+        }
+        logAccountsListLoaded(
+          {
+            accounts: list,
+            linkedCount: data.linkedCount,
+            totalInDatabase: data.totalInDatabase,
+            listScope: data.listScope,
+            maxLinkedAccounts: data.maxLinkedAccounts,
+          },
+          "upload page"
+        );
+        if (data && typeof data.linkedCount === "number") {
+          setAccountQuota({
+            linkedCount: data.linkedCount,
+            maxLinkedAccounts: data.maxLinkedAccounts ?? null,
+            canAddMore: data.canAddMore !== false,
+          });
+        }
+      }
     });
   }, []);
 
@@ -110,6 +150,15 @@ export default function UploadPage() {
     if (musicQuery.trim()) form.append("musicQuery", musicQuery.trim());
     form.append("accountIds", JSON.stringify([...selected]));
     form.append("parallelism", String(parallelism));
+    form.append("staggerSeconds", String(staggerSeconds));
+    if (scheduledStartAt.trim()) {
+      const t = new Date(scheduledStartAt).getTime();
+      if (!Number.isNaN(t)) form.append("scheduledStartAt", new Date(t).toISOString());
+    }
+    if (uniqueCaptionPerAccount) {
+      form.append("uniqueCaptionPerAccount", "1");
+      if (aiPrompt.trim()) form.append("captionTopic", aiPrompt.trim());
+    }
 
     const res = await fetch("/api/upload", { method: "POST", body: form });
     const data = await res.json();
@@ -129,7 +178,9 @@ export default function UploadPage() {
     }
     setMsg(
       res.ok
-        ? `Started upload to ${data.processed} account(s) with parallelism=${data.parallelism || parallelism}. Music query: ${data.musicQuery || "default (trending)"}. Progress updates below.`
+        ? `Started upload to ${data.processed} account(s) with parallelism=${data.parallelism || parallelism}. ${
+            uniqueCaptionPerAccount ? "Unique AI captions were generated per account. " : ""
+          }Music query: ${data.musicQuery || "default (trending)"}. Progress updates below.`
         : data.error || "Upload failed"
     );
   };
@@ -246,6 +297,24 @@ export default function UploadPage() {
               {aiLoading ? "Generating…" : "Generate caption (AI)"}
             </button>
           </div>
+
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-violet-200/90 bg-violet-50/60 px-4 py-3 dark:border-violet-900/50 dark:bg-violet-950/25">
+            <input
+              type="checkbox"
+              checked={uniqueCaptionPerAccount}
+              onChange={(e) => setUniqueCaptionPerAccount(e.target.checked)}
+              className="mt-1 h-4 w-4 shrink-0 rounded border-violet-400 text-violet-600 focus:ring-violet-500"
+            />
+            <span className="min-w-0">
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100">Different AI description per account</span>
+              <span className="mt-1 block text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                On upload, the server generates a distinct caption for each selected account (same video). Topic order: caption
+                above, then optional AI keywords field, then sound search, then the video file name. Requires{" "}
+                <code className="rounded bg-white/80 px-1 font-mono text-[11px] dark:bg-zinc-900">GROQ_API_KEY</code> on the
+                server. May take a few seconds before the batch starts.
+              </span>
+            </span>
+          </label>
         </section>
 
         <section className="rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-6 shadow-lg shadow-zinc-200/30 dark:border-zinc-800 dark:shadow-black/30">
@@ -257,7 +326,8 @@ export default function UploadPage() {
               <div>
                 <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Select TikTok accounts</h2>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Tap cards to select. Upload runs once per selected account (multi-post).
+                  Use the checklist below (scroll inside the box if you have many accounts). Order follows selection: first
+                  checked is first in the rotation queue, then stagger delay applies to the next.
                 </p>
               </div>
             </div>
@@ -296,10 +366,47 @@ export default function UploadPage() {
             </div>
           </div>
 
+          <div className="mt-4 grid gap-3 rounded-xl border border-zinc-200/80 bg-zinc-50/80 p-4 dark:border-zinc-700 dark:bg-zinc-900/40 sm:grid-cols-2">
+            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+              Seconds between accounts (rotation)
+              <input
+                type="number"
+                min={0}
+                max={86400}
+                step={1}
+                value={staggerSeconds}
+                onChange={(e) => setStaggerSeconds(Math.min(86400, Math.max(0, Number(e.target.value) || 0)))}
+                className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+              <span className="mt-1 block font-normal text-zinc-500 dark:text-zinc-400">
+                0 = all eligible at once (within parallelism). Larger values space jobs out automatically.
+              </span>
+            </label>
+            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+              Start batch at (optional)
+              <input
+                type="datetime-local"
+                value={scheduledStartAt}
+                onChange={(e) => setScheduledStartAt(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+              <span className="mt-1 block font-normal text-zinc-500 dark:text-zinc-400">
+                Leave empty to start from “now” (or from submit time). Combined with stagger, first account uses this time.
+              </span>
+            </label>
+          </div>
+
           <div className="mt-2 flex items-center justify-between text-sm">
             <span className="font-semibold text-rose-600 dark:text-rose-400">
               {selected.size} of {accounts.length} selected
             </span>
+            {accountQuota && (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Linked {accountQuota.linkedCount}
+                {accountQuota.maxLinkedAccounts != null ? ` / ${accountQuota.maxLinkedAccounts} allowed` : " (no limit)"}
+                {!accountQuota.canAddMore && " — at account limit"}
+              </span>
+            )}
             {accounts.length === 0 && (
               <Link
                 href="/accounts"
@@ -309,6 +416,15 @@ export default function UploadPage() {
               </Link>
             )}
           </div>
+          {accountsListInfo && (
+            <AccountsListExplain
+              listScope={accountsListInfo.listScope}
+              totalInDatabase={accountsListInfo.totalInDatabase}
+              listCount={accounts.length}
+              linkedCount={accountQuota?.linkedCount ?? accounts.length}
+              maxLinkedAccounts={accountQuota?.maxLinkedAccounts ?? null}
+            />
+          )}
 
           {accounts.length === 0 ? (
             <div className="mt-6 rounded-xl bg-zinc-100/80 px-6 py-10 text-center dark:bg-zinc-900/60">
@@ -321,42 +437,40 @@ export default function UploadPage() {
               </Link>
             </div>
           ) : (
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {accounts.map((a) => {
-                const on = selected.has(a.id);
-                const noSession = a.hasSession === false;
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    disabled={noSession}
-                    onClick={() => toggle(a.id)}
-                    className={`flex items-center gap-4 rounded-xl border-2 px-4 py-4 text-left transition ${
-                      noSession
-                        ? "cursor-not-allowed border-zinc-200/60 opacity-50 dark:border-zinc-800"
-                        : on
-                          ? "border-rose-500 bg-gradient-to-br from-rose-500/10 to-violet-500/10 shadow-md shadow-rose-500/10 ring-2 ring-rose-500/30 dark:border-rose-400 dark:ring-rose-400/25"
-                          : "border-zinc-200/80 bg-zinc-50/50 hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-900/40 dark:hover:border-zinc-600"
-                    }`}
-                  >
-                    <span
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 text-sm font-bold ${
-                        on
-                          ? "border-rose-600 bg-rose-600 text-white"
-                          : "border-zinc-300 bg-transparent text-transparent dark:border-zinc-600"
-                      }`}
-                    >
-                      {on ? "✓" : " "}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-bold text-zinc-900 dark:text-white">{a.username}</p>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {noSession ? "No session — fix on Accounts" : "Session ready"}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="mt-6 max-h-[min(22rem,55vh)] overflow-y-auto rounded-xl border border-zinc-200/90 bg-white dark:border-zinc-700 dark:bg-zinc-950/40">
+              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {accounts.map((a) => {
+                  const on = selected.has(a.id);
+                  const noSession = a.hasSession === false;
+                  return (
+                    <li key={a.id}>
+                      <label
+                        className={`flex cursor-pointer items-center gap-3 px-3 py-2.5 transition ${
+                          noSession
+                            ? "cursor-not-allowed opacity-50"
+                            : on
+                              ? "bg-rose-500/10 dark:bg-rose-950/30"
+                              : "hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 rounded border-zinc-300 text-rose-600 focus:ring-rose-500 dark:border-zinc-600"
+                          checked={on}
+                          disabled={noSession}
+                          onChange={() => toggle(a.id)}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-zinc-900 dark:text-white">{a.username}</p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {noSession ? "No session — fix on Accounts" : "Session ready"}
+                          </p>
+                        </div>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
         </section>

@@ -21,7 +21,8 @@ export async function POST(request: Request) {
   try {
     await connectDB();
     const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
-    const job = await createBulkRenameJob(ownerId, prompt, accountIds);
+    const isAdmin = (user as { role?: string }).role === "admin";
+    const job = await createBulkRenameJob(ownerId, prompt, accountIds, { skipAccessCheck: isAdmin });
     return NextResponse.json({
       ok: true,
       jobId: String(job._id),

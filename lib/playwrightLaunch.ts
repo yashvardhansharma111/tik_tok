@@ -50,14 +50,30 @@ function useLinuxStyleSandboxArgs(): boolean {
  */
 const LINUX_SERVER_LAUNCH_ARGS = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] as const;
 
-function buildDefaultArgs(): string[] {
+/** Less Chrome background traffic (updates, sync) — not TikTok page weight; set `TIKTOK_CHROMIUM_LEAN_AUTOMATION=0` to disable. */
+const LEAN_AUTOMATION_CHROMIUM_ARGS = [
+  "--disable-background-networking",
+  "--disable-component-update",
+  "--disable-default-apps",
+  "--disable-sync",
+  "--metrics-recording-only",
+  "--no-first-run",
+] as const;
+
+function buildDefaultArgs(purpose?: PlaywrightPurpose): string[] {
   const base = ["--disable-blink-features=AutomationControlled"];
   const linux = useLinuxStyleSandboxArgs() ? [...LINUX_SERVER_LAUNCH_ARGS] : [];
   const extra =
     process.env.PLAYWRIGHT_CHROMIUM_ARGS?.split(/\s+/)
       .map((s) => s.trim())
       .filter(Boolean) ?? [];
-  return [...linux, ...base, ...extra];
+  let out = [...linux, ...base, ...extra];
+  const leanOff =
+    process.env.TIKTOK_CHROMIUM_LEAN_AUTOMATION === "0" || process.env.TIKTOK_CHROMIUM_LEAN_AUTOMATION === "false";
+  if (purpose === "automation" && !leanOff) {
+    out = [...out, ...LEAN_AUTOMATION_CHROMIUM_ARGS];
+  }
+  return out;
 }
 
 function resolveHeadless(): boolean {
@@ -78,7 +94,7 @@ function resolveHeadless(): boolean {
   return false;
 }
 
-export function getChromiumLaunchOptions(_purpose?: PlaywrightPurpose): LaunchOptions {
+export function getChromiumLaunchOptions(purpose?: PlaywrightPurpose): LaunchOptions {
   const headless = resolveHeadless();
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined;
   const envChannel = process.env.PLAYWRIGHT_CHANNEL?.trim() as LaunchOptions["channel"] | undefined;
@@ -98,7 +114,7 @@ export function getChromiumLaunchOptions(_purpose?: PlaywrightPurpose): LaunchOp
   const opts: LaunchOptions = {
     // headless follows resolveHeadless(); on Linux VPS without DISPLAY this is typically true — pairs with LINUX_SERVER_LAUNCH_ARGS.
     headless,
-    args: buildDefaultArgs(),
+    args: buildDefaultArgs(purpose),
     ...(linuxish ? { chromiumSandbox: false } : {}),
     ...(executablePath ? { executablePath } : {}),
     ...(channel ? { channel } : {}),

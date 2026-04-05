@@ -3,11 +3,21 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { ConnectTikTok } from "@/components/ConnectTikTok";
+import { AccountsListExplain } from "@/components/AccountsListExplain";
+import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 
 type Account = { id: string; username: string; proxy?: string; status: string; hasSession: boolean };
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsListInfo, setAccountsListInfo] = useState<{
+    totalInDatabase: number;
+    listScope: "owner_only" | "all_in_database";
+  } | null>(null);
+  const [accountQuota, setAccountQuota] = useState<{
+    linkedCount: number;
+    maxLinkedAccounts: number | null;
+  } | null>(null);
   const [captureUser, setCaptureUser] = useState("");
   const [captureProxy, setCaptureProxy] = useState("");
   const [captureBusy, setCaptureBusy] = useState(false);
@@ -25,7 +35,33 @@ export default function AccountsPage() {
       return;
     }
     const data = await res.json();
-    if (res.ok) setAccounts(data);
+    if (res.ok) {
+      const list = Array.isArray(data) ? data : data.accounts ?? [];
+      setAccounts(list);
+      if (typeof data.totalInDatabase === "number" && (data.listScope === "owner_only" || data.listScope === "all_in_database")) {
+        setAccountsListInfo({ totalInDatabase: data.totalInDatabase, listScope: data.listScope });
+      } else {
+        setAccountsListInfo(null);
+      }
+      if (typeof data.linkedCount === "number") {
+        setAccountQuota({
+          linkedCount: data.linkedCount,
+          maxLinkedAccounts: data.maxLinkedAccounts ?? null,
+        });
+      } else {
+        setAccountQuota(null);
+      }
+      logAccountsListLoaded(
+        {
+          accounts: list,
+          linkedCount: data.linkedCount,
+          totalInDatabase: data.totalInDatabase,
+          listScope: data.listScope,
+          maxLinkedAccounts: data.maxLinkedAccounts,
+        },
+        "accounts page"
+      );
+    }
   };
 
   useEffect(() => {
@@ -212,6 +248,16 @@ export default function AccountsPage() {
         </span>
       </div>
 
+      {accountsListInfo && (
+        <AccountsListExplain
+          listScope={accountsListInfo.listScope}
+          totalInDatabase={accountsListInfo.totalInDatabase}
+          listCount={accounts.length}
+          linkedCount={accountQuota?.linkedCount ?? accounts.length}
+          maxLinkedAccounts={accountQuota?.maxLinkedAccounts ?? null}
+          className="mt-10 rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400"
+        />
+      )}
       <h3 className="mt-12 text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Your accounts</h3>
       <ul className="mt-4 space-y-3">
         {accounts.map((a) => (

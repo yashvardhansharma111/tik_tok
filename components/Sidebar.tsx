@@ -10,6 +10,7 @@ const baseNav = [
   { href: "/accounts", label: "Accounts", icon: "◎" },
   { href: "/rename", label: "Rename", icon: "✎" },
   { href: "/upload", label: "Upload", icon: "▲" },
+  { href: "/campaign", label: "Campaign", icon: "⚡" },
   { href: "/history", label: "History", icon: "☰" },
 ] as const;
 

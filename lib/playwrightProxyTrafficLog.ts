@@ -2,7 +2,12 @@ import type { Page } from "playwright";
 
 export type ProxyTrafficLogHandle = {
   /** Call before closing the browser context. Logs summary to stdout. */
-  finish: (opts?: { mainGotoMs?: number; mainGotoUrl?: string }) => void;
+  finish: (opts?: {
+    mainGotoMs?: number;
+    mainGotoUrl?: string;
+    /** `pooled` = reused BrowserContext (HTTP cache warm); `fresh` = new context; `chained-reuse` = same tab multi-upload. */
+    browserContext?: "pooled" | "fresh" | "chained-reuse";
+  }) => void;
 };
 
 /**
@@ -66,6 +71,19 @@ export function attachProxyTrafficLog(page: Page, label: string): ProxyTrafficLo
       lines.push(`[ProxyTraffic] ${label}`);
       if (opts?.mainGotoUrl != null) {
         lines.push(`  main navigation: ${opts.mainGotoUrl} (${opts.mainGotoMs ?? "?"} ms)`);
+      }
+      if (opts?.browserContext === "pooled") {
+        lines.push(
+          `  browser context: pooled (warm cache — lower MB than a fresh context when the same account runs again without restarting the server)`
+        );
+      } else if (opts?.browserContext === "fresh") {
+        lines.push(
+          `  browser context: fresh (cold cache — expect higher MB; same account’s next success reuses context if TIKTOK_REUSE_UPLOAD_CONTEXT is on)`
+        );
+      } else if (opts?.browserContext === "chained-reuse") {
+        lines.push(
+          `  browser context: chained same-page upload (repeat navigations to upload URL — typically lower MB than full cold Studio load)`
+        );
       }
       lines.push(
         `  estimated download (Content-Length only): ${mb.toFixed(2)} MB across ${responsesWithLength} responses; ${responsesWithoutLength} responses had no length (chunked/unknown) — not counted`

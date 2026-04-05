@@ -1,16 +1,55 @@
-type UserLike = { _id: unknown; role?: string } | null;
+import mongoose from "mongoose";
 
-/**
- * Shared pool: every logged-in user sees and can use all TikTok accounts (no per-user isolation).
- * Use `{ _id: null }` only when there is no user (should not query accounts).
- */
-export function accountFilterForUser(user: UserLike): Record<string, unknown> {
-  if (!user?._id) return { _id: null };
-  return {};
+type AccountLike = {
+  ownerId?: unknown;
+  ownerIds?: unknown;
+  _id?: unknown;
+};
+
+/** Mongo filter: accounts this app user may use (legacy `ownerId` or `ownerIds` array). */
+export function accountAccessibleByUser(userId: mongoose.Types.ObjectId) {
+  return {
+    $or: [{ ownerId: userId }, { ownerIds: userId }],
+  };
 }
 
-/** Upload history: show all uploads for everyone (shared dashboard). */
-export function uploadFilterForUser(_user: UserLike): Record<string, unknown> {
-  if (!_user?._id) return { _id: null };
-  return {};
+/** Whether `userId` may use this account document. */
+export function userHasAccountAccess(account: AccountLike, userId: mongoose.Types.ObjectId): boolean {
+  const uid = String(userId);
+  if (account.ownerId != null && String(account.ownerId) === uid) return true;
+  const raw = account.ownerIds;
+  if (Array.isArray(raw)) {
+    return raw.some((id) => String(id) === uid);
+  }
+  return false;
+}
+
+/** Distinct owner ids for an account (legacy + array, deduped). */
+export function effectiveOwnerIds(account: AccountLike): string[] {
+  const out = new Set<string>();
+  if (account.ownerId != null) out.add(String(account.ownerId));
+  const raw = account.ownerIds;
+  if (Array.isArray(raw)) {
+    for (const id of raw) {
+      if (id != null) out.add(String(id));
+    }
+  }
+  return [...out];
+}
+
+/** How many accounts this user can access (for max-linked checks). */
+export async function countAccountsForUser(
+  AccountModel: {
+    countDocuments: (q: Record<string, unknown>) => Promise<number>;
+  },
+  userId: mongoose.Types.ObjectId,
+  excludeAccountId?: mongoose.Types.ObjectId
+): Promise<number> {
+  const base = accountAccessibleByUser(userId);
+  if (!excludeAccountId) {
+    return AccountModel.countDocuments(base);
+  }
+  return AccountModel.countDocuments({
+    $and: [base, { _id: { $ne: excludeAccountId } }],
+  });
 }

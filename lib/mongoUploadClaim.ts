@@ -1,15 +1,33 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import mongoose from "mongoose";
 import { UploadModel } from "@/lib/models/Upload";
+
+export type ClaimUploadBatchOptions = {
+  /** Skip jobs for these account ObjectIds (e.g. account mid upload chain on same page). */
+  excludeAccountIds?: string[];
+};
 
 /**
  * Atomically claim up to `limit` pending jobs from the same upload batch (`uploadId`)
  * when possible, so large multi-account posts run in parallel waves (e.g. 4+4+4).
+ *
+ * Respects `notBefore` on each row: staggered / scheduled batches only claim jobs whose window has started.
  */
-export async function claimUploadBatch(limit: number): Promise<any[]> {
+export async function claimUploadBatch(limit: number, opts?: ClaimUploadBatchOptions): Promise<any[]> {
   const now = new Date();
+  const pendingWindow = {
+    $or: [
+      { notBefore: null },
+      { notBefore: { $exists: false } },
+      { notBefore: { $lte: now } },
+    ],
+  };
   const baseMatch = {
     status: "pending" as const,
-    $or: [{ nextRetryAt: null }, { nextRetryAt: { $lte: now } }],
+    $and: [
+      { $or: [{ nextRetryAt: null }, { nextRetryAt: { $lte: now } }] },
+      pendingWindow,
+    ],
     uploadId: { $exists: true, $nin: [null, ""] },
   };
 
@@ -34,19 +52,39 @@ export async function claimUploadBatch(limit: number): Promise<any[]> {
   const useDesired = Number.isFinite(desired) && desired > 0;
   const effectiveLimit = Math.max(1, Math.min(limit, useDesired ? Math.floor(desired) : limit));
 
-  const queryBase = {
+  const clampedByServer = useDesired && limit < Math.floor(desired);
+  console.log("[UploadClaim] wave", {
+    uploadId: targetUploadId,
+    serverParallelCap: limit,
+    batchParallelismField: useDesired ? Math.floor(desired) : "(unset)",
+    effectiveJobsThisWave: effectiveLimit,
+    ...(clampedByServer
+      ? {
+          warning:
+            "Parallelism is LIMITED by UPLOAD_PARALLEL_BATCH_SIZE — increase or unset this env to match your campaign (e.g. 2 browsers needs UPLOAD_PARALLEL_BATCH_SIZE>=2).",
+        }
+      : {}),
+  });
+
+  const exclude = (opts?.excludeAccountIds ?? []).filter(Boolean);
+  const queryBase: Record<string, unknown> = {
     ...baseMatch,
     uploadId: targetUploadId,
   };
+  if (exclude.length > 0) {
+    queryBase.accountId = {
+      $nin: exclude.map((id) => new mongoose.Types.ObjectId(id)),
+    };
+  }
 
   const claimed: any[] = [];
   for (let i = 0; i < effectiveLimit; i++) {
     const job = await UploadModel.findOneAndUpdate(
-      queryBase,
+      queryBase as any,
       {
         $set: { status: "uploading", error: undefined, nextRetryAt: null },
       },
-      { sort: { timestamp: -1 }, returnDocument: "after" }
+      { sort: { notBefore: 1 as const, timestamp: 1 }, returnDocument: "after" }
     ).lean();
 
     if (!job) break;

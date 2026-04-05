@@ -1,6 +1,11 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
 import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
-import { makeUploadContextPoolKey, offerUploadContext, takeUploadContext } from "@/lib/uploadContextPool";
+import {
+  discardUploadContext,
+  makeUploadContextPoolKey,
+  offerUploadContext,
+  takeUploadContext,
+} from "@/lib/uploadContextPool";
 import { attachProxyTrafficLog } from "@/lib/playwrightProxyTrafficLog";
 import { isTikTokSessionLoggedOut } from "@/lib/tiktokSessionHealth";
 import fs from "fs";
@@ -12,7 +17,7 @@ import {
   setCachedSound,
   type CachedSoundEntry,
 } from "@/lib/soundCache";
-import { humanPause, humanScroll, scaledHumanRand, typeTextLikeHuman } from "@/lib/humanBehavior";
+import { humanPause, humanScroll, scaledHumanRand, scaledMusicRand, typeTextLikeHuman } from "@/lib/humanBehavior";
 
 const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en";
 
@@ -1157,7 +1162,7 @@ async function clickSuggestionFromDom(
 
   ctx.flow(`[music] suggestion clicked via DOM: "${(domSuggestions.text || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
-  await page.waitForTimeout(scaledHumanRand(700, 1200));
+  await page.waitForTimeout(scaledMusicRand(700, 1200));
   return true;
 }
 
@@ -1218,7 +1223,7 @@ async function tryClickMatchingSuggestion(
     return false;
   }
 
-  await page.waitForTimeout(scaledHumanRand(220, 520));
+  await page.waitForTimeout(scaledMusicRand(220, 520));
 let clickable = best.loc.locator(
   'button, [role="button"]'
 ).first();
@@ -1244,7 +1249,7 @@ try {
   const afterClickValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] suggestion click -> input value now: "${(afterClickValue || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
-  await page.waitForTimeout(scaledHumanRand(700, 1200));
+  await page.waitForTimeout(scaledMusicRand(700, 1200));
   return true;
 }
 
@@ -1346,7 +1351,7 @@ async function runSearchInPanel(
   const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
   await searchInput.press(selectAll).catch(() => {});
   await searchInput.press("Backspace").catch(() => {});
-  await page.waitForTimeout(scaledHumanRand(180, 320));
+  await page.waitForTimeout(scaledMusicRand(180, 320));
 
   const isLongOrIdLike = term.length >= 26 || /\d{8,}/.test(term) || (term.includes("-") && /\d/.test(term));
   if (isLongOrIdLike) {
@@ -1354,14 +1359,14 @@ async function runSearchInPanel(
     ctx.flow(`[music] search (fast fill): "${short}"`);
     await searchInput.fill(term).catch(async () => {
       // Some Studio builds block fill(); fall back to typing quickly.
-      await searchInput.type(term, { delay: scaledHumanRand(5, 18) });
+      await searchInput.type(term, { delay: scaledMusicRand(5, 18) });
     });
-    await page.waitForTimeout(scaledHumanRand(450, 850));
+    await page.waitForTimeout(scaledMusicRand(450, 850));
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
-    await page.waitForTimeout(scaledHumanRand(900, 1500));
+    await page.waitForTimeout(scaledMusicRand(900, 1500));
     await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(scaledHumanRand(220, 420));
+    await page.waitForTimeout(scaledMusicRand(220, 420));
     await page.keyboard.press("Escape").catch(() => {});
     await panelRoot.click({ force: true }).catch(() => {});
     return;
@@ -1373,25 +1378,25 @@ async function runSearchInPanel(
     throwIfAborted(signal);
     const ch = term[i];
     // TikTok suggestions/results can be flaky if we type too fast.
-    await searchInput.type(ch, { delay: scaledHumanRand(25, 70) });
+    await searchInput.type(ch, { delay: scaledMusicRand(25, 70) });
     typed += ch;
-    await page.waitForTimeout(scaledHumanRand(220, 420));
+    await page.waitForTimeout(scaledMusicRand(220, 420));
 
     const trimmed = typed.trim();
     if (trimmed.length < 6) continue;
     const shouldProbe = /\s/.test(ch) || i === term.length - 1 || i % 4 === 3;
     if (!shouldProbe) continue;
 
-    await page.waitForTimeout(scaledHumanRand(260, 520));
+    await page.waitForTimeout(scaledMusicRand(260, 520));
     const clickedSuggestion = await tryClickMatchingSuggestion(page, searchInput, panelRoot, term, trimmed, ctx);
     if (clickedSuggestion) {
       // Submit to ensure results load and suggestion dropdown collapses.
       await searchInput.press("Enter").catch(() => {});
       await page.keyboard.press("Enter").catch(() => {});
       ctx.flow("[music] search: pressed Enter after suggestion click");
-      await page.waitForTimeout(scaledHumanRand(650, 1100));
+      await page.waitForTimeout(scaledMusicRand(650, 1100));
       await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(scaledHumanRand(220, 420));
+      await page.waitForTimeout(scaledMusicRand(220, 420));
       await page.keyboard.press("Escape").catch(() => {});
       await panelRoot.click({ force: true }).catch(() => {});
       return;
@@ -1409,20 +1414,20 @@ async function runSearchInPanel(
   const typedValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] search input value now: "${(typedValue || "").slice(0, 80)}"`);
   // Give TikTok a moment to populate results after the full query is present.
-  await page.waitForTimeout(scaledHumanRand(1600, 2600));
-  await page.waitForTimeout(scaledHumanRand(700, 1200));
+  await page.waitForTimeout(scaledMusicRand(1600, 2600));
+  await page.waitForTimeout(scaledMusicRand(700, 1200));
   // Always submit the query with Enter to collapse the suggestions dropdown.
   await searchInput.press("Enter").catch(() => {});
   await page.keyboard.press("Enter").catch(() => {});
   ctx.flow("[music] search: pressed Enter");
-  await page.waitForTimeout(scaledHumanRand(650, 1100));
+  await page.waitForTimeout(scaledMusicRand(650, 1100));
 
   // If still no visible results and no explicit "no results" message, press Enter again.
   if (!(await panelHasVisibleSoundResults(panelRoot)) && !(await panelShowsNoResults(panelRoot))) {
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
     ctx.flow("[music] search: pressed Enter fallback");
-    await page.waitForTimeout(scaledHumanRand(900, 1500));
+    await page.waitForTimeout(scaledMusicRand(900, 1500));
   }
 
   // Suggestions dropdown can overlay the results list (and Plus buttons) — dismiss it.
@@ -1859,7 +1864,7 @@ async function tryQuickAddAndSaveAfterSearch(
   timeoutMs: number
 ): Promise<boolean> {
   // TikTok often renders rows / Plus buttons a bit after the query is set.
-  await page.waitForTimeout(scaledHumanRand(900, 1700));
+  await page.waitForTimeout(scaledMusicRand(900, 1700));
   const raw = await harvestSoundCandidates(panelRoot, ctx);
   const ranked = rankTopFiveScored(raw, musicQuery, ctx);
   if (ranked.length === 0) {
@@ -1922,7 +1927,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
   timeoutMs: number,
   signal?: AbortSignal
 ): Promise<{ ok: boolean; pickedText?: string }> {
-  await page.waitForTimeout(scaledHumanRand(900, 1700));
+  await page.waitForTimeout(scaledMusicRand(900, 1700));
   await page.keyboard.press("Escape").catch(() => {});
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2085,7 +2090,7 @@ async function executeOneSoundAttempt(
   ctx.flow("[music][audio] clicked: sound row root (data-e2e sound row or option) — selects/highlight row");
 
   // Let TikTok update the row state before trying to click +/apply.
-  await page.waitForTimeout(scaledHumanRand(650, 1200));
+  await page.waitForTimeout(scaledMusicRand(650, 1200));
 
   // Some TikTok Studio variants require clicking the row's Plus button instead of the row itself.
   // Try it opportunistically before looking for global/dialog apply buttons.
@@ -2100,7 +2105,7 @@ async function executeOneSoundAttempt(
     `[music][audio] in-row PlusBold: visible=${plusVisible} disabled=${plusDisabled} — if visible, click adds this row's sound (avoids wrong global Plus)`
   );
   if (plusVisible && !plusDisabled) {
-    await page.waitForTimeout(scaledHumanRand(650, 1200));
+    await page.waitForTimeout(scaledMusicRand(650, 1200));
     await plusInRow.click({ force: true }).catch(() => {});
     ctx.flow("[music][audio] clicked: PlusBold inside same row locator — adds audio from that row");
     await page.waitForTimeout(250);
@@ -2341,12 +2346,179 @@ type PlaywrightProxyConfig = {
   password?: string;
 };
 
+export type TikTokUploadSessionHandle = {
+  page: Page;
+  context: import("playwright").BrowserContext;
+  poolKey: string;
+  username: string;
+};
+
+export type RunUploadSessionOptions = {
+  /** Continue on the same page/context from a previous successful upload in this chain. */
+  reuse?: TikTokUploadSessionHandle;
+  /**
+   * When true, on success keep the browser context open and return `sessionHandle`.
+   * Caller must call `poolSessionHandleAfterUploadChain` when done or `discardUploadSessionHandle` on failure.
+   */
+  holdSessionForChain?: boolean;
+};
+
 export type TikTokUploadRunResult = {
   success: boolean;
   error?: string;
   /** TikTok sound row label when automation applied a sound. */
   soundUsed?: string;
+  sessionHandle?: TikTokUploadSessionHandle;
 };
+
+/** After the last chained upload succeeded — return context to the pool (closes the tab first). */
+export async function poolSessionHandleAfterUploadChain(handle: TikTokUploadSessionHandle): Promise<void> {
+  await handle.page.close().catch(() => {});
+  offerUploadContext(handle.poolKey, handle.context);
+}
+
+/** Drop a chained session on error (does not pool). */
+export async function discardUploadSessionHandle(handle: TikTokUploadSessionHandle): Promise<void> {
+  discardUploadContext(handle.poolKey);
+  await handle.page.close().catch(() => {});
+  await handle.context.close().catch(() => {});
+}
+
+/**
+ * Upload → caption → sound → toggles → Post (assumes upload UI is ready with file input available).
+ */
+async function runStudioUploadPipeline(
+  page: Page,
+  ctx: FlowContext,
+  videoPath: string,
+  caption: string,
+  musicQuery: string | undefined,
+  username: string
+): Promise<TikTokUploadRunResult> {
+  let soundUsed: string | undefined;
+
+  ctx.flow("human: pause before choosing file");
+  await humanPause(page);
+  await humanScroll(page);
+
+  ctx.flow("video upload: setInputFiles on file input");
+  const fileInput = page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first();
+  await fileInput.setInputFiles(videoPath);
+  ctx.flow("setInputFiles dispatched");
+
+  for (let i = 0; i < 5; i++) {
+    await dismissAutomaticContentChecksOfferDialog(page, ctx, `post-set-input-${i}`);
+    await dismissStopCopyrightDialog(page, ctx, `post-set-input-${i}`);
+    await page.waitForTimeout(scaledHumanRand(650, 1200));
+  }
+
+  await logUploadProgressHints(page, ctx);
+  await ctx.shot(page, "step-2a-after-set-input.png");
+
+  const captionBox = await waitForCaptionEditorVisible(page, ctx, 120000);
+  await dismissAutomaticContentChecksOfferDialog(page, ctx, "before-caption-type");
+  await logUploadProgressHints(page, ctx);
+  await logMusicRelatedControls(page, ctx);
+  await logModals(page, ctx);
+  await ctx.shot(page, "step-2-uploaded.png");
+
+  await ctx.pauseIfDebug(page, "after upload completes (caption area visible)");
+
+  if (captionBox && (await captionBox.isVisible().catch(() => false))) {
+    ctx.flow("caption: focus and type (human-like)");
+    await humanPause(page);
+    await humanScroll(page);
+    await captionBox.click({ force: true });
+    await page.waitForTimeout(scaledHumanRand(400, 900));
+    await captionBox.fill("");
+    await typeTextLikeHuman(page, captionBox, caption);
+    ctx.flow("caption filled");
+    await humanPause(page);
+  } else {
+    ctx.flow("caption: editor missing — skip fill (failure likely)");
+  }
+
+  await logMusicRelatedControls(page, ctx);
+  await logCoreElements(page, ctx);
+  await ctx.shot(page, "step-3-caption.png");
+
+  await ctx.pauseIfDebug(page, "after caption filled");
+  await humanScroll(page);
+
+  const effectiveMusicQuery = musicQuery?.trim() || "trending";
+  if (effectiveMusicQuery) {
+    if (musicQuery?.trim()) {
+      ctx.flow(`music: musicQuery set → try sound picker (${effectiveMusicQuery.slice(0, 60)}…)`);
+    } else {
+      ctx.flow(`music: no musicQuery provided — using default (${effectiveMusicQuery})`);
+    }
+    soundUsed = await tryAddSoundToVideo(page, effectiveMusicQuery, ctx, username);
+  } else {
+    ctx.flow("music: no musicQuery — skip sound selection");
+  }
+
+  ctx.flow("toggles: Music copyright + Content check lite → off");
+  await humanPause(page);
+  await turnOffCopyrightAndContentCheckToggles(page, 70000, ctx);
+
+  await logMusicRelatedControls(page, ctx);
+  await humanPause(page);
+  await humanScroll(page);
+  const postBtn = await waitForPostButtonEnabled(page, ctx, 180000);
+  if (!postBtn) {
+    await ctx.shot(page, "step-4-post-never-enabled.png");
+    return { success: false, error: "Post button not active", soundUsed };
+  }
+
+  ctx.flow("toggles: final pass before Post");
+  await humanPause(page);
+  await turnOffCopyrightAndContentCheckToggles(page, 25000, ctx);
+
+  await ctx.shot(page, "step-4-before-post.png");
+  await ctx.pauseIfDebug(page, "before clicking Post");
+
+  await humanPause(page);
+  await postBtn.click({ force: true });
+  ctx.flow("Post clicked");
+
+  await clickPostConfirmDialogsIfPresent(page, ctx, 12000);
+
+  await humanPause(page, 2400, 4000);
+
+  const postNow = page.locator(TIKTOK_STUDIO_SELECTORS.postNowConfirm).first();
+  if (await postNow.isVisible().catch(() => false)) {
+    ctx.flow('confirm modal: "Post now"');
+    await humanPause(page, 1000, 1800);
+    await postNow.click({ force: true });
+    await humanPause(page, 1600, 2800);
+  }
+
+  await clickPostConfirmDialogsIfPresent(page, ctx, 8000);
+
+  if (await detectPostRejectedByTikTok(page, ctx)) {
+    await ctx.shot(page, "step-post-rejected-modal.png");
+    return {
+      success: false,
+      error: "TikTok blocked post (Community Guidelines / suspicious activity)",
+      soundUsed,
+    };
+  }
+
+  await humanPause(page, 3200, 5200);
+
+  if (await detectPostRejectedByTikTok(page, ctx)) {
+    await ctx.shot(page, "step-post-rejected-modal-late.png");
+    return {
+      success: false,
+      error: "TikTok blocked post (Community Guidelines / suspicious activity)",
+      soundUsed,
+    };
+  }
+
+  await ctx.shot(page, "step-5-after-post.png");
+  ctx.flow("flow complete");
+  return { success: true, soundUsed };
+}
 
 export async function runUploadWithSession(
   username: string,
@@ -2355,7 +2527,8 @@ export async function runUploadWithSession(
   caption: string,
   proxy?: PlaywrightProxyConfig | string,
   browser?: import("playwright").Browser,
-  musicQuery?: string
+  musicQuery?: string,
+  sessionOptions?: RunUploadSessionOptions
 ): Promise<TikTokUploadRunResult> {
   const ctx = createFlowContext(username);
   let soundUsed: string | undefined;
@@ -2370,6 +2543,10 @@ export async function runUploadWithSession(
   let poolKey = "";
   let wroteTmpSession = false;
   let contextFromPool = false;
+
+  const holdSessionForChain = sessionOptions?.holdSessionForChain === true;
+  const reuse = sessionOptions?.reuse;
+  let page: Page | undefined;
 
   function done(r: TikTokUploadRunResult): TikTokUploadRunResult {
     outcome = r;
@@ -2401,187 +2578,90 @@ export async function runUploadWithSession(
       process.env.TIKTOK_REUSE_UPLOAD_CONTEXT !== "false";
     poolKey = makeUploadContextPoolKey(username, resolvedProxy);
 
-    if (reuseEnabled) {
-      const pooled = takeUploadContext(poolKey);
-      if (pooled) {
-        context = pooled;
-        contextFromPool = true;
-        ctx.flow("reusing pooled browser context (warm cache)");
-        for (const p of context.pages()) {
-          await p.close().catch(() => {});
+    if (reuse) {
+      context = reuse.context;
+      page = reuse.page;
+      contextFromPool = false;
+      ctx.flow("reuse: chained upload — same page, navigate back to Studio upload");
+      trafficLog = attachProxyTrafficLog(page, `tiktok-upload:${username}`);
+      const tGoto = Date.now();
+      await gotoTikTokUploadWithRetries(page, ctx, TIKTOK_UPLOAD_URL);
+      mainGotoMs = Date.now() - tGoto;
+      ctx.flow(`navigation commit timing (reuse): ${mainGotoMs}ms`);
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await humanPause(page, 600, 1400);
+      await humanScroll(page);
+      const inputOkReuse = await waitForFileInput(page, ctx, 90000);
+      if (!inputOkReuse) {
+        await ctx.shot(page, "reuse-open-page-failed-no-input.png");
+        return done({ success: false, error: "Upload file input not found", soundUsed: undefined });
+      }
+      await logCoreElements(page, ctx);
+      await logModals(page, ctx);
+      await ctx.shot(page, "step-1-reuse-upload.png");
+    } else {
+      if (reuseEnabled) {
+        const pooled = takeUploadContext(poolKey);
+        if (pooled) {
+          context = pooled;
+          contextFromPool = true;
+          ctx.flow("reusing pooled browser context (warm cache)");
+          for (const p of context.pages()) {
+            await p.close().catch(() => {});
+          }
         }
       }
-    }
 
-    if (!context) {
-      fs.writeFileSync(tmpFile, sessionJson, "utf-8");
-      wroteTmpSession = true;
-      context = await activeBrowser.newContext({
-        storageState: tmpFile,
-        userAgent,
-        ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
-      });
-      await installSafeBandwidthRoutes(context);
-    }
+      if (!context) {
+        fs.writeFileSync(tmpFile, sessionJson, "utf-8");
+        wroteTmpSession = true;
+        context = await activeBrowser.newContext({
+          storageState: tmpFile,
+          userAgent,
+          ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+        });
+        await installSafeBandwidthRoutes(context);
+      }
 
-    const page = await context.newPage();
-    trafficLog = attachProxyTrafficLog(page, `tiktok-upload:${username}`);
+      page = await context.newPage();
+      trafficLog = attachProxyTrafficLog(page, `tiktok-upload:${username}`);
 
-    ctx.flow(`navigate → ${TIKTOK_UPLOAD_URL}`);
-    const tGoto = Date.now();
-    await gotoTikTokUploadWithRetries(page, ctx, TIKTOK_UPLOAD_URL);
-    mainGotoMs = Date.now() - tGoto;
-    ctx.flow(`navigation commit timing: ${mainGotoMs}ms`);
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
-    ctx.flow("navigation committed + domcontentloaded (best-effort)");
+      ctx.flow(`navigate → ${TIKTOK_UPLOAD_URL}`);
+      const tGoto = Date.now();
+      await gotoTikTokUploadWithRetries(page, ctx, TIKTOK_UPLOAD_URL);
+      mainGotoMs = Date.now() - tGoto;
+      ctx.flow(`navigation commit timing: ${mainGotoMs}ms`);
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      ctx.flow("navigation committed + domcontentloaded (best-effort)");
 
-    if (await isTikTokSessionLoggedOut(page)) {
-      await ctx.shot(page, "session-expired-or-logged-out.png");
-      return done({
-        success: false,
-        error:
-          "SESSION_EXPIRED: TikTok session missing or expired. Re-import storageState JSON on Accounts (local capture or browser export).",
-        soundUsed: undefined,
-      });
-    }
+      if (await isTikTokSessionLoggedOut(page)) {
+        await ctx.shot(page, "session-expired-or-logged-out.png");
+        return done({
+          success: false,
+          error:
+            "SESSION_EXPIRED: TikTok session missing or expired. Re-import storageState JSON on Accounts (local capture or browser export).",
+          soundUsed: undefined,
+        });
+      }
 
-    ctx.flow("human: pause + scroll after load");
-    await humanPause(page);
-    await humanScroll(page);
-
-    const inputOk = await waitForFileInput(page, ctx, 90000);
-    if (!inputOk) {
-      await ctx.shot(page, "step-1-open-page-failed-no-input.png");
-      return done({ success: false, error: "Upload file input not found", soundUsed: undefined });
-    }
-
-    await logCoreElements(page, ctx);
-    await logModals(page, ctx);
-    await ctx.shot(page, "step-1-open-page.png");
-
-    ctx.flow("human: pause before choosing file");
-    await humanPause(page);
-    await humanScroll(page);
-
-    ctx.flow("video upload: setInputFiles on file input");
-    const fileInput = page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first();
-    await fileInput.setInputFiles(videoPath);
-    ctx.flow("setInputFiles dispatched");
-
-    for (let i = 0; i < 5; i++) {
-      await dismissAutomaticContentChecksOfferDialog(page, ctx, `post-set-input-${i}`);
-      await dismissStopCopyrightDialog(page, ctx, `post-set-input-${i}`);
-      await page.waitForTimeout(scaledHumanRand(650, 1200));
-    }
-
-    await logUploadProgressHints(page, ctx);
-    await ctx.shot(page, "step-2a-after-set-input.png");
-
-    const captionBox = await waitForCaptionEditorVisible(page, ctx, 120000);
-    await dismissAutomaticContentChecksOfferDialog(page, ctx, "before-caption-type");
-    await logUploadProgressHints(page, ctx);
-    await logMusicRelatedControls(page, ctx);
-    await logModals(page, ctx);
-    await ctx.shot(page, "step-2-uploaded.png");
-
-    await ctx.pauseIfDebug(page, "after upload completes (caption area visible)");
-
-    if (captionBox && (await captionBox.isVisible().catch(() => false))) {
-      ctx.flow("caption: focus and type (human-like)");
+      ctx.flow("human: pause + scroll after load");
       await humanPause(page);
       await humanScroll(page);
-      await captionBox.click({ force: true });
-      await page.waitForTimeout(scaledHumanRand(400, 900));
-      await captionBox.fill("");
-      await typeTextLikeHuman(page, captionBox, caption);
-      ctx.flow("caption filled");
-      await humanPause(page);
-    } else {
-      ctx.flow("caption: editor missing — skip fill (failure likely)");
-    }
 
-    await logMusicRelatedControls(page, ctx);
-    await logCoreElements(page, ctx);
-    await ctx.shot(page, "step-3-caption.png");
-
-    await ctx.pauseIfDebug(page, "after caption filled");
-    await humanScroll(page);
-
-    const effectiveMusicQuery = musicQuery?.trim() || "trending";
-    if (effectiveMusicQuery) {
-      if (musicQuery?.trim()) {
-        ctx.flow(`music: musicQuery set → try sound picker (${effectiveMusicQuery.slice(0, 60)}…)`);
-      } else {
-        ctx.flow(`music: no musicQuery provided — using default (${effectiveMusicQuery})`);
+      const inputOk = await waitForFileInput(page, ctx, 90000);
+      if (!inputOk) {
+        await ctx.shot(page, "step-1-open-page-failed-no-input.png");
+        return done({ success: false, error: "Upload file input not found", soundUsed: undefined });
       }
-      soundUsed = await tryAddSoundToVideo(page, effectiveMusicQuery, ctx, username);
-    } else {
-      ctx.flow("music: no musicQuery — skip sound selection");
+
+      await logCoreElements(page, ctx);
+      await logModals(page, ctx);
+      await ctx.shot(page, "step-1-open-page.png");
     }
 
-    ctx.flow("toggles: Music copyright + Content check lite → off");
-    await humanPause(page);
-    await turnOffCopyrightAndContentCheckToggles(page, 70000, ctx);
-
-    await logMusicRelatedControls(page, ctx);
-    await humanPause(page);
-    await humanScroll(page);
-    const postBtn = await waitForPostButtonEnabled(page, ctx, 180000);
-    if (!postBtn) {
-      await ctx.shot(page, "step-4-post-never-enabled.png");
-      return done({ success: false, error: "Post button not active", soundUsed });
-    }
-
-    ctx.flow("toggles: final pass before Post");
-    await humanPause(page);
-    await turnOffCopyrightAndContentCheckToggles(page, 25000, ctx);
-
-    await ctx.shot(page, "step-4-before-post.png");
-    await ctx.pauseIfDebug(page, "before clicking Post");
-
-    await humanPause(page);
-    await postBtn.click({ force: true });
-    ctx.flow("Post clicked");
-
-    // Some Studio variants show a confirmation dialog (Continue/Post/Post now/etc).
-    await clickPostConfirmDialogsIfPresent(page, ctx, 12000);
-
-    await humanPause(page, 2400, 4000);
-
-    const postNow = page.locator(TIKTOK_STUDIO_SELECTORS.postNowConfirm).first();
-    if (await postNow.isVisible().catch(() => false)) {
-      ctx.flow('confirm modal: "Post now"');
-      await humanPause(page, 1000, 1800);
-      await postNow.click({ force: true });
-      await humanPause(page, 1600, 2800);
-    }
-
-    // Re-check late confirmations.
-    await clickPostConfirmDialogsIfPresent(page, ctx, 8000);
-
-    if (await detectPostRejectedByTikTok(page, ctx)) {
-      await ctx.shot(page, "step-post-rejected-modal.png");
-      return done({
-        success: false,
-        error: "TikTok blocked post (Community Guidelines / suspicious activity)",
-        soundUsed,
-      });
-    }
-
-    await humanPause(page, 3200, 5200);
-
-    if (await detectPostRejectedByTikTok(page, ctx)) {
-      await ctx.shot(page, "step-post-rejected-modal-late.png");
-      return done({
-        success: false,
-        error: "TikTok blocked post (Community Guidelines / suspicious activity)",
-        soundUsed,
-      });
-    }
-
-    await ctx.shot(page, "step-5-after-post.png");
-    ctx.flow("flow complete");
-    return done({ success: true, soundUsed });
+    const pipelineResult = await runStudioUploadPipeline(page, ctx, videoPath, caption, musicQuery, username);
+    soundUsed = pipelineResult.soundUsed;
+    return done(pipelineResult);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Upload failed";
     if (isClosedTargetError(e)) {
@@ -2592,14 +2672,29 @@ export async function runUploadWithSession(
     return done({ success: false, error: msg, soundUsed });
   } finally {
     try {
-      trafficLog?.finish({ mainGotoMs, mainGotoUrl: TIKTOK_UPLOAD_URL });
+      trafficLog?.finish({
+        mainGotoMs,
+        mainGotoUrl: TIKTOK_UPLOAD_URL,
+        browserContext: reuse
+          ? "chained-reuse"
+          : contextFromPool
+            ? "pooled"
+            : "fresh",
+      });
     } catch {}
     try {
-      if (context) {
+      if (outcome?.success && holdSessionForChain && context && browser && page && !outcome.error?.includes("SESSION_EXPIRED")) {
+        outcome = {
+          ...outcome,
+          sessionHandle: { page, context, poolKey, username },
+        };
+        context = undefined;
+      } else if (context) {
         const shouldPool =
           outcome?.success === true &&
           reuseEnabled &&
           !!browser &&
+          !holdSessionForChain &&
           !outcome.error?.includes("SESSION_EXPIRED");
         if (shouldPool) {
           offerUploadContext(poolKey, context);
@@ -2614,6 +2709,15 @@ export async function runUploadWithSession(
     } catch {}
     try {
       if (wroteTmpSession) fs.unlinkSync(tmpFile);
+    } catch {}
+    try {
+      if (
+        outcome?.success === true &&
+        !envTruthy(process.env.TIKTOK_UPLOAD_KEEP_DEBUG_ON_SUCCESS)
+      ) {
+        fs.rmSync(ctx.debugDir, { recursive: true, force: true });
+        console.log(`[FLOW] removed debug folder after success: ${path.relative(process.cwd(), ctx.debugDir)}`);
+      }
     } catch {}
   }
 }

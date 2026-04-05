@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
+import mongoose from "mongoose";
 import { getCurrentUser } from "@/lib/currentUser";
+import { countAccountsForUser, userHasAccountAccess } from "@/lib/accountAccess";
 import { AccountModel } from "@/lib/models/Account";
+import { UserModel } from "@/lib/models/User";
 import { captureTikTokStorageState } from "@/automation/captureTikTokSession";
 
 export const maxDuration = 300;
@@ -38,15 +41,52 @@ export async function POST(request: Request) {
 
   try {
     await connectDB();
+    const ownerId = (user as { _id: unknown })._id as mongoose.Types.ObjectId;
+    const isAdmin = (user as { role?: string }).role === "admin";
+
+    if (accountId) {
+      const doc = await AccountModel.findById(accountId).lean();
+      if (!doc) {
+        return NextResponse.json({ error: "Account not found" }, { status: 404 });
+      }
+      if (!isAdmin && !userHasAccountAccess(doc as { ownerId?: unknown; ownerIds?: unknown }, ownerId)) {
+        return NextResponse.json({ error: "Not your account" }, { status: 403 });
+      }
+    } else if (username) {
+      const doc = await AccountModel.findOne({ username }).lean();
+      if (doc) {
+        if (!isAdmin && !userHasAccountAccess(doc as { ownerId?: unknown; ownerIds?: unknown }, ownerId)) {
+          return NextResponse.json(
+            { error: "This TikTok username is linked to other users. Ask an admin to add you as a co-owner." },
+            { status: 403 }
+          );
+        }
+      } else {
+        const u = await UserModel.findById(ownerId).select({ maxLinkedAccounts: 1 }).lean();
+        const max = (u as { maxLinkedAccounts?: number | null } | null)?.maxLinkedAccounts ?? null;
+        const count = await countAccountsForUser(AccountModel, ownerId);
+        if (max != null && count >= max) {
+          return NextResponse.json(
+            {
+              error: `Account limit reached (${max}). Remove an account or ask an admin to raise your limit.`,
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
     const sessionJson = await captureTikTokStorageState(proxy || undefined);
-    const ownerId = (user as { _id: unknown })._id;
     const filter = accountId ? { _id: accountId } : { username };
     const update: Record<string, unknown> = {
-      ...(username ? { username } : {}),
-      session: sessionJson,
-      proxy: proxy || undefined,
-      status: "active",
-      ownerId,
+      $set: {
+        ...(username ? { username } : {}),
+        session: sessionJson,
+        proxy: proxy || undefined,
+        status: "active",
+      },
+      $addToSet: { ownerIds: ownerId },
+      $setOnInsert: { ownerId },
     };
 
     const account = await AccountModel.findOneAndUpdate(filter, update, {

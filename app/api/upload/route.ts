@@ -9,9 +9,11 @@ import { Readable } from "stream";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import { getCurrentUser } from "@/lib/currentUser";
+import { userHasAccountAccess } from "@/lib/accountAccess";
 import { AccountModel } from "@/lib/models/Account";
 import { UploadModel } from "@/lib/models/Upload";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
+import { generateTikTokCaption } from "@/lib/aiCaption";
 
 export const maxDuration = 600;
 export const runtime = "nodejs";
@@ -39,6 +41,10 @@ export async function POST(request: Request) {
     let musicQuery = "";
     let accountIds: string[] = [];
     let parallelism = 4;
+    let staggerSeconds = 0;
+    let scheduledStartAt = "";
+    let uniqueCaptionPerAccount = false;
+    let captionTopic = "";
     let videoPath = "";
     let videoDisplayName = "video.mp4";
 
@@ -71,6 +77,16 @@ export async function POST(request: Request) {
           accountIds = [];
         }
       }
+      if (name === "staggerSeconds") {
+        const n = Number.parseFloat(String(val ?? "").trim());
+        if (Number.isFinite(n)) staggerSeconds = Math.min(86_400, Math.max(0, n));
+      }
+      if (name === "scheduledStartAt") scheduledStartAt = String(val ?? "").trim();
+      if (name === "uniqueCaptionPerAccount") {
+        const s = String(val ?? "").trim().toLowerCase();
+        uniqueCaptionPerAccount = s === "1" || s === "true" || s === "on" || s === "yes";
+      }
+      if (name === "captionTopic") captionTopic = String(val ?? "").trim();
     });
 
     busboy.on("file", (fieldname: string, fileStream: any, info: any) => {
@@ -131,6 +147,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "One or more accounts not found" }, { status: 403 });
     }
 
+    const isAdmin = (user as { role?: string }).role === "admin";
+    for (const a of accounts) {
+      if (!isAdmin && !userHasAccountAccess(a as { ownerId?: unknown; ownerIds?: unknown }, ownerId)) {
+        return NextResponse.json({ error: "One or more accounts are not yours" }, { status: 403 });
+      }
+    }
+
+    const byId = new Map(accounts.map((a: { _id: unknown }) => [String(a._id), a]));
+    const ordered = accountIds.map((id) => byId.get(id)).filter(Boolean) as typeof accounts;
+    if (ordered.length !== accountIds.length) {
+      return NextResponse.json({ error: "Invalid account order" }, { status: 400 });
+    }
+
+    const staggerMs = Math.round(staggerSeconds * 1000);
+    const hasSchedule = Boolean(scheduledStartAt);
+    let baseMs = Date.now();
+    if (hasSchedule) {
+      const t = new Date(scheduledStartAt).getTime();
+      if (Number.isNaN(t)) {
+        return NextResponse.json({ error: "Invalid scheduledStartAt (use ISO date-time)" }, { status: 400 });
+      }
+      baseMs = t;
+    }
+
     const oidAccountIds = accountIds.map((id) => new mongoose.Types.ObjectId(id));
     await UploadModel.updateMany(
       {
@@ -149,23 +189,65 @@ export async function POST(request: Request) {
       hasMusicQuery: normalizedMusicQuery.length > 0,
       musicQuery: normalizedMusicQuery || "(none)",
       parallelism: normalizedParallelism,
+      staggerSeconds,
+      scheduledStartAt: hasSchedule ? scheduledStartAt : "(immediate)",
+      uniqueCaptionPerAccount,
     });
 
-    const uploadDocs = await Promise.all(
-      accounts.map((a: any) =>
-        UploadModel.create({
-          ownerId,
-          uploadId,
-          parallelism: normalizedParallelism,
-          accountId: a._id,
-          videoFileName: videoDisplayName,
-          caption,
-          ...(normalizedMusicQuery ? { musicQuery: normalizedMusicQuery } : {}),
-          status: "pending",
-          timestamp: new Date(),
-        })
-      )
-    );
+    const nAccounts = ordered.length;
+    let captions: string[] = [];
+    if (uniqueCaptionPerAccount && nAccounts > 0) {
+      const baseTopic =
+        caption.trim() ||
+        captionTopic ||
+        normalizedMusicQuery ||
+        `Short video file: ${videoDisplayName}`;
+      try {
+        for (let i = 0; i < nAccounts; i++) {
+          const one = await generateTikTokCaption(baseTopic, {
+            variationIndex: i,
+            variationTotal: nAccounts,
+          });
+          captions.push(one);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Caption generation failed";
+        return NextResponse.json(
+          {
+            error:
+              msg.includes("GROQ_API_KEY") || msg.includes("Groq")
+                ? "Unique captions require GROQ_API_KEY and a working Groq model. " + msg
+                : msg,
+          },
+          { status: msg.includes("GROQ_API_KEY") ? 503 : 502 }
+        );
+      }
+    }
+
+    const uploadDocs = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i] as { _id: mongoose.Types.ObjectId };
+      let notBefore: Date | null = null;
+      if (staggerMs > 0) {
+        notBefore = new Date(baseMs + i * staggerMs);
+      } else if (hasSchedule) {
+        notBefore = new Date(baseMs);
+      }
+      const rowCaption = uniqueCaptionPerAccount && captions[i] != null ? captions[i] : caption;
+      const doc = await UploadModel.create({
+        ownerId,
+        uploadId,
+        parallelism: normalizedParallelism,
+        accountId: a._id,
+        videoFileName: videoDisplayName,
+        caption: rowCaption,
+        ...(normalizedMusicQuery ? { musicQuery: normalizedMusicQuery } : {}),
+        status: "pending",
+        timestamp: new Date(),
+        notBefore,
+      });
+      uploadDocs.push(doc);
+    }
 
     // Auto-start the Mongo runner inside the Next.js server (no extra terminal).
     ensureMongoUploadRunnerStarted();
@@ -177,6 +259,8 @@ export async function POST(request: Request) {
       uploadId,
       musicQuery: normalizedMusicQuery || null,
       parallelism: normalizedParallelism,
+      staggerSeconds,
+      scheduledStartAt: hasSchedule ? scheduledStartAt : null,
     });
   } catch (e) {
     return NextResponse.json(

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { connectDB } from "@/lib/db";
+import { userHasAccountAccess } from "@/lib/accountAccess";
 import { AccountModel } from "@/lib/models/Account";
 import { RenameJobModel } from "@/lib/models/RenameJob";
 import { renameTikTokUsername } from "@/automation/renameTikTokUsername";
@@ -251,7 +252,7 @@ async function runBulkRenameJob(jobId: string) {
         continue;
       }
 
-      const proxy = buildStickyProxyForAccount(acc.username, acc.proxy, 1);
+      const proxy = buildStickyProxyForAccount(acc.username, acc.proxy, 1, String(acc._id));
       let lastError = "";
       let done = false;
 
@@ -344,7 +345,12 @@ async function runBulkRenameJob(jobId: string) {
   }
 }
 
-export async function createBulkRenameJob(ownerId: mongoose.Types.ObjectId, prompt: string, accountIds: string[]) {
+export async function createBulkRenameJob(
+  ownerId: mongoose.Types.ObjectId,
+  prompt: string,
+  accountIds: string[],
+  opts?: { skipAccessCheck?: boolean }
+) {
   await connectDB();
   const accounts = await AccountModel.find({
     _id: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
@@ -352,6 +358,13 @@ export async function createBulkRenameJob(ownerId: mongoose.Types.ObjectId, prom
 
   if (accounts.length !== accountIds.length) {
     throw new Error("One or more accounts not found");
+  }
+  if (!opts?.skipAccessCheck) {
+    for (const a of accounts) {
+      if (!userHasAccountAccess(a as { ownerId?: unknown; ownerIds?: unknown }, ownerId)) {
+        throw new Error("One or more accounts not owned by you");
+      }
+    }
   }
 
   const items = accounts.map((a: any) => ({

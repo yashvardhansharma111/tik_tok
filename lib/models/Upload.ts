@@ -8,6 +8,12 @@ const UploadSchema = new Schema(
     parallelism: { type: Number, required: false, index: true },
     accountId: { type: Schema.Types.ObjectId, ref: "Account", required: true, index: true },
     videoFileName: { type: String, required: true },
+    /** Relative path inside `storage/tmp-uploads/{uploadId}/` (default `video.mp4`). */
+    videoRelPath: { type: String, required: false },
+    /** Set to the batch `uploadId` when this row belongs to a multi-video campaign. */
+    campaignId: { type: String, required: false, index: true },
+    /** Index along this account’s `perAccountVideoOrder` (0 = first video in sequence). */
+    campaignStep: { type: Number, required: false },
     caption: { type: String, required: true },
     musicQuery: { type: String, required: false },
     soundUsed: { type: String, required: false },
@@ -16,6 +22,8 @@ const UploadSchema = new Schema(
     status: { type: String, enum: ["pending", "uploading", "success", "failed"], default: "pending" },
     error: { type: String, required: false },
     timestamp: { type: Date, default: Date.now, index: true },
+    /** Job not claimable until this time (stagger within batch + optional scheduled start). */
+    notBefore: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );

@@ -6,6 +6,7 @@ import type { BrowserContext } from "playwright";
  *
  * Set `TIKTOK_BLOCK_NON_ESSENTIAL=0` to disable entirely if Studio misbehaves.
  * Set `TIKTOK_BLOCK_STUDIO_IMAGES=0` to keep loading images while still blocking fonts + trackers.
+ * Set `TIKTOK_PROXY_SAVINGS_MODE=0` to disable extra safe cuts (source maps, manifest, extra ad hosts).
  */
 export async function installSafeBandwidthRoutes(context: BrowserContext): Promise<void> {
   const disabled =
@@ -15,10 +16,28 @@ export async function installSafeBandwidthRoutes(context: BrowserContext): Promi
   const blockImages =
     process.env.TIKTOK_BLOCK_STUDIO_IMAGES !== "0" && process.env.TIKTOK_BLOCK_STUDIO_IMAGES !== "false";
 
+  const savingsMode =
+    process.env.TIKTOK_PROXY_SAVINGS_MODE !== "0" && process.env.TIKTOK_PROXY_SAVINGS_MODE !== "false";
+
   await context.route("**/*", async (route) => {
     const req = route.request();
     const url = req.url();
     const rt = req.resourceType();
+
+    if (savingsMode) {
+      try {
+        if (new URL(url).pathname.toLowerCase().endsWith(".map")) {
+          await route.abort();
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      if (rt === "manifest" || rt === "texttrack") {
+        await route.abort();
+        return;
+      }
+    }
 
     if (rt === "font") {
       await route.abort();
@@ -33,7 +52,9 @@ export async function installSafeBandwidthRoutes(context: BrowserContext): Promi
         u.includes("sf16-ies-music") ||
         u.includes("/music") ||
         u.includes("music?") ||
-        u.includes("music&")
+        u.includes("music&") ||
+        (u.includes("tiktokcdn.com") &&
+          (u.includes("music") || u.includes("sound") || u.includes("cover") || u.includes("album")))
       ) {
         await route.continue();
         return;
@@ -61,6 +82,26 @@ export async function installSafeBandwidthRoutes(context: BrowserContext): Promi
     ) {
       await route.abort();
       return;
+    }
+
+    if (savingsMode) {
+      if (
+        host.includes("googleadservices.com") ||
+        host.includes("googlesyndication.com") ||
+        host === "adservice.google.com" ||
+        host.endsWith(".adservice.google.com") ||
+        host.includes("ads.linkedin.com") ||
+        host.includes("amazon-adsystem.com") ||
+        host.includes("taboola.com") ||
+        host.includes("outbrain.com") ||
+        host.includes("chartbeat.com") ||
+        host.includes("newrelic.com") ||
+        host.includes("nr-data.net") ||
+        host.includes("moatads.com")
+      ) {
+        await route.abort();
+        return;
+      }
     }
 
     if (rt === "beacon") {

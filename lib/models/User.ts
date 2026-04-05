@@ -7,6 +7,8 @@ const UserSchema = new Schema(
     role: { type: String, enum: ["admin", "user"], default: "user" },
     status: { type: String, enum: ["pending", "active", "blocked"], default: "pending" },
     emailVerified: { type: Boolean, default: false },
+    /** Max TikTok accounts this user may link; `null` / unset = unlimited (default). */
+    maxLinkedAccounts: { type: Number, default: null, required: false },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
@@ -18,6 +20,7 @@ export type UserDoc = {
   role: "admin" | "user";
   status: "pending" | "active" | "blocked";
   emailVerified: boolean;
+  maxLinkedAccounts?: number | null;
   createdAt: Date;
 };
 

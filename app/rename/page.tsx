@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
+import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 
 type Account = { id: string; username: string; proxy?: string; status: string; hasSession: boolean };
 
@@ -32,7 +33,20 @@ export default function RenamePage() {
       return;
     }
     const data = await res.json();
-    if (res.ok) setAccounts(data);
+    if (res.ok) {
+      const list = Array.isArray(data) ? data : data.accounts ?? [];
+      setAccounts(list);
+      logAccountsListLoaded(
+        {
+          accounts: list,
+          linkedCount: data.linkedCount,
+          totalInDatabase: data.totalInDatabase,
+          listScope: data.listScope,
+          maxLinkedAccounts: data.maxLinkedAccounts,
+        },
+        "rename page"
+      );
+    }
   };
 
   useEffect(() => {

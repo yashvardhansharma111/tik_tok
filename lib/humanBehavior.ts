@@ -1,12 +1,26 @@
 import type { Locator, Page } from "playwright";
 
-/** Global multiplier for upload-flow pauses (`HUMAN_TIMING_SCALE`, default 0.72). */
+/** Global multiplier for upload-flow pauses (`HUMAN_TIMING_SCALE`, default 0.58). */
 export function getHumanTimingScale(): number {
   const raw = process.env.HUMAN_TIMING_SCALE;
-  if (raw === undefined || raw === "") return 0.72;
+  if (raw === undefined || raw === "") return 0.58;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 0.72;
+  if (!Number.isFinite(n)) return 0.58;
   return Math.min(2, Math.max(0.2, n));
+}
+
+/** Tighter delays for music picker / sound search (`TIKTOK_MUSIC_TIMING_SCALE`, default 0.48). */
+export function getMusicTimingScale(): number {
+  const raw = process.env.TIKTOK_MUSIC_TIMING_SCALE;
+  if (raw === undefined || raw === "") return 0.48;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0.48;
+  return Math.min(1.5, Math.max(0.12, n));
+}
+
+export function scaledMusicRand(minMs: number, maxMs: number): number {
+  const s = getMusicTimingScale();
+  return humanRand(Math.round(minMs * s), Math.round(maxMs * s));
 }
 
 /** Inclusive random integer in [min, max]. */
@@ -24,7 +38,7 @@ export function scaledHumanRand(minMs: number, maxMs: number): number {
 
 /**
  * Pause like a human between actions (default 2–3.5s, override with HUMAN_PAUSE_MIN_MS / HUMAN_PAUSE_MAX_MS).
- * Bounds are multiplied by `HUMAN_TIMING_SCALE` (default 0.72).
+ * Bounds are multiplied by `HUMAN_TIMING_SCALE` (default 0.58).
  */
 export async function humanPause(page: Page, minOverride?: number, maxOverride?: number): Promise<number> {
   const scale = getHumanTimingScale();

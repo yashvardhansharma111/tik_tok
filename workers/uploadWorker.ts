@@ -8,6 +8,8 @@ import { UploadModel } from "../lib/models/Upload";
 import { runUploadWithSession } from "../automation/uploadWorker";
 import { resolveOptimizedVideoPath } from "../lib/optimizeVideoForUpload";
 import { launchChromium } from "../lib/playwrightLaunch";
+import { buildStickyProxyForAccount } from "../lib/proxyPlaywright";
+import { ensureStorageJanitorStarted } from "../lib/storageJanitor";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 import mongoose from "mongoose";
 
@@ -103,13 +105,10 @@ async function processUpload(job: Job<UploadJobPayload>) {
       { $set: { status: "uploading", error: undefined } }
     );
 
-    const proxyConfig = buildIproxyConfig(
-      username,
-      attemptNumber,
-      proxy,
-      process.env.PROXY_USERNAME,
-      process.env.PROXY_PASSWORD
-    );
+    const proxyConfig =
+      buildStickyProxyForAccount(username, proxy, attemptNumber, accountId) ?? {
+        server: process.env.PROXY_SERVER || "http://geo.iproyal.com:12321",
+      };
 
     const activeBrowser = await getBrowser();
     const videoForUpload = await resolveOptimizedVideoPath(videoPath);
@@ -241,6 +240,8 @@ worker.on("failed", (job, err) => {
 });
 
 console.log(`[Queue] upload worker started`, { queue: QUEUE_NAME, concurrency });
+
+ensureStorageJanitorStarted();
 
 // Keep process alive
 process.on("SIGTERM", () => {

@@ -55,8 +55,11 @@ Alternatively use **SSH X11 forwarding** (`ssh -X`) or **VNC** so `DISPLAY` is s
 | `PLAYWRIGHT_CHANNEL` | e.g. `chrome` to use installed Google Chrome. |
 | `TIKTOK_PROXY_TRAFFIC_LOG` | Set `1` to log **estimated** proxy egress per upload (sums `Content-Length` on responses, top hostnames, resource types, main-frame navigations, and main `goto` time). Chunked responses without length are not counted. |
 | `TIKTOK_BLOCK_NON_ESSENTIAL` | **Upload worker only.** When unset or `1`, blocks **fonts**, optional **images** (see below), known third-party trackers (Google Analytics / GTM / DoubleClick / Facebook pixel hosts), and **`beacon`** requests. Does **not** block `ttwstatic`, `effectcdn`, or music CDNs. Set `0` to disable all of this if Studio misbehaves. |
-| `TIKTOK_BLOCK_STUDIO_IMAGES` | Only used when `TIKTOK_BLOCK_NON_ESSENTIAL` is on. Default blocks most **images** except URLs that look music-related (`ies-music`, `/music`, etc.). Set `0` to load all images again (still blocks fonts + trackers). |
-| `HUMAN_TIMING_SCALE` | Multiplier for **human-like** pauses in the upload flow (`humanPause`, `scaledHumanRand`, `humanScroll`, caption typing). Default **`0.72`** (~28% shorter). Set **`1`** to restore previous pacing. |
+| `TIKTOK_BLOCK_STUDIO_IMAGES` | Only used when `TIKTOK_BLOCK_NON_ESSENTIAL` is on. Default blocks most **images** except URLs that look music-related (`ies-music`, `/music`, `tiktokcdn.com` paths with music/sound/cover, etc.). Set `0` to load all images again (still blocks fonts + trackers). |
+| `TIKTOK_PROXY_SAVINGS_MODE` | When **not** `0` (default: **on**), adds **safe** cuts on top of non-essential blocking: **source maps** (`.map`), **`manifest` / `texttrack`** types, and extra **ad/telemetry** hostnames (Google Ads, Taboola, New Relic, etc.). Does **not** block `ttwstatic`, `effectcdn`, or music APIs. Set `0` if anything breaks. |
+| `TIKTOK_CHROMIUM_LEAN_AUTOMATION` | When **not** `0` (default: **on** for automation launches), adds Chromium flags that reduce **Chrome’s own** background traffic (sync, component update checks). Set `0` to disable. Does not change TikTok page behavior. |
+| `HUMAN_TIMING_SCALE` | Multiplier for **human-like** pauses in most of the upload flow (`humanPause`, `scaledHumanRand`, `humanScroll`, caption typing). Default **`0.58`**. Set **`1`** to restore slower pacing. |
+| `TIKTOK_MUSIC_TIMING_SCALE` | Multiplier for **music / Add sound** step delays only (often the slowest screen). Default **`0.48`**. Set **`1`** for original pacing. |
 | `TIKTOK_REUSE_UPLOAD_CONTEXT` | When **not** `0`/`false` (default: **on**), successful uploads **return the Playwright `BrowserContext` to a pool** keyed by account + proxy. The **next** upload for the same account/proxy reuses it so **JS/effect chunks hit HTTP cache** and proxy download drops a lot on repeat runs. Set `0` for a fresh context every time. Only applies when a **shared** browser is used (Mongo runner / queue workers). |
 | `TIKTOK_UPLOAD_CONTEXT_POOL_MAX` | Max pooled contexts (default **16**). Oldest evicted when full. |
 | `UPLOAD_VIDEO_FFMPEG` | Set `1` / `true` to run **FFmpeg** before upload: H.264 ~720p wide, CRF 28, AAC 96k — **smaller file = less upload bytes** through the proxy. Requires `ffmpeg` on `PATH`. If FFmpeg fails, the original file is used. |
@@ -64,6 +67,13 @@ Alternatively use **SSH X11 forwarding** (`ssh -X`) or **VNC** so `DISPLAY` is s
 | `UPLOAD_FFMPEG_MAX_WIDTH` | Max width in px (default **720**). |
 | `UPLOAD_GOTO_RETRIES` | Retries for the **first** `page.goto` to TikTok Studio when the proxy tunnel fails (`net::ERR_TUNNEL_CONNECTION_FAILED`, etc.). Default **3**. |
 | `UPLOAD_GOTO_RETRY_DELAY_MS` | Pause between those retries (default **5000** ms). |
+| `PROXY_STICKY_SLOT_COUNT` | `0` | **Residential sticky sessions (e.g. IPRoyal `password_session-…`).** When **`0`** or unset, each account uses its **username** in the session string (one proxy identity per account). When set to **≥ 2** (e.g. **`10`**), accounts are hashed into **`slot0`…`slot9`** so **several accounts share the same proxy session** before you exhaust slots — fewer unique rotations than “new session every account”. Aim for **~2–3 accounts per slot**: `N ≈ ceil(total_accounts / 3)` (30 accounts → **`10`**). Retries still append `-1`, `-2` to the password. |
+| `STORAGE_JANITOR` | *(on)* | Set **`0`** to disable periodic cleanup of old **`storage/debug`** and **`storage/tmp-uploads`** subfolders. |
+| `STORAGE_JANITOR_MAX_AGE_MS` | `86400000` (24h) | Delete subdirs **older than** this (mtime). |
+| `STORAGE_JANITOR_INTERVAL_MS` | `3600000` (1h) | How often the janitor runs. |
+| `TIKTOK_UPLOAD_KEEP_DEBUG_ON_SUCCESS` | *(unset)* | If **`1`** / **`true`**, keep the **`storage/debug/<runId>`** folder after a **successful** upload (default: **delete** it on success to save disk; failures always keep the folder). |
+
+**Proxy MB (~25 MB goal):** Most download bytes are TikTok’s own **`fetch` + scripts + CDNs** (`ttwstatic`, `effectcdn`) — those **cannot** be blocked without breaking Studio or music. A **~25 MB** `Content-Length` count is most realistic on the **second consecutive upload** for the **same account** (pooled context + HTTP cache), with `TIKTOK_PROXY_SAVINGS_MODE` on, `UPLOAD_VIDEO_FFMPEG=1` if you bill upload traffic, and the same region. **Cold** first loads are often **~30–40+ MB** counted.
 
 If you cannot run a browser on the server, paste **Playwright `storageState` JSON** on the Accounts page instead of using **Capture session**.
 
@@ -85,9 +95,21 @@ The Mongo upload runner processes jobs in **parallel waves**: each wave runs up 
 | `UPLOAD_BATCH_GAP_MS` | `0` | Extra pause (ms) after a wave finishes before the next poll cycle. |
 | `UPLOAD_POLL_INTERVAL_MS` | `2500` | Sleep when the queue is empty. |
 
-The old `UPLOAD_JOB_START_DELAY_MS` stagger between starts was removed so each wave starts **in parallel** (one shared Chromium, separate contexts per account).
+Multi-account batches can also set **`staggerSeconds`** and optional **`scheduledStartAt`** (ISO time) on the upload form. Each job row gets a **`notBefore`** time: rotation follows **account selection order**, with spacing `staggerSeconds` starting from “now” or from **`scheduledStartAt`**. The worker only claims jobs whose `notBefore` has passed, so you can queue a full day in one submit.
+
+Admins can set **`maxLinkedAccounts`** per user (`PATCH /api/admin/users/[id]`); unset / `null` means unlimited.
+
+With **`uniqueCaptionPerAccount`** on the upload form, the server calls Groq once per selected account so each row gets a **different caption** (helps when posting the same clip to many accounts). Same **`GROQ_API_KEY`** / **`GROQ_MODEL`** as single-caption AI.
 
 Progress ETA on `/api/upload/status/[uploadId]` uses the same batch size to estimate “waves” remaining.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TIKTOK_UPLOAD_SAME_PAGE_CHAIN` | *(on)* | Set **`0`** to disable **same-page chaining**: after each successful post, the worker looks for **another pending job for the same account** (any batch), reuses **one** browser context + **one** tab, `goto` upload URL again, and uploads the next video **without** a new context/login. Reduces repeated Studio cold-load traffic when users queue multiple videos per account. |
+| `UPLOAD_CHAIN_GAP_MIN_MS` | `1000` | Random pause **before** starting the next chained upload (min). |
+| `UPLOAD_CHAIN_GAP_MAX_MS` | `3000` | Random pause before the next chained upload (max). |
+
+Parallel browsers are unchanged: **each account slot** can still run concurrently; chaining only **serializes multiple jobs for the same account** on one page. Expect **~5–8 MB per repeat** only if **HTTP cache** hits (measure with `TIKTOK_PROXY_TRAFFIC_LOG=1`); the **first** Studio load per context often remains **~25–40 MB+** depending on region and proxy.
 
 ### Retries & “loops”
 
