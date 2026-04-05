@@ -3,6 +3,7 @@ import path from "path";
 import mongoose from "mongoose";
 import { UploadModel } from "@/lib/models/Upload";
 import { CampaignModel } from "@/lib/models/Campaign";
+import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
 import { generateTikTokCaption } from "@/lib/aiCaption";
 
 /** Single sound search for the whole campaign; falls back to first legacy `musicQueries` entry. */
@@ -272,6 +273,7 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
     } else {
       await CampaignModel.updateOne({ _id: (fresh as any)._id }, { $set: { status: "completed" } });
       console.log("[Campaign] completed (no more repeats)", { uploadId, completedPasses, maxCycles: maxC });
+      await tryCleanupUploadBatch(uploadId);
     }
     return;
   }
@@ -291,8 +293,3 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
   if (c3) await enqueueCampaignWave(c3);
 }
 
-export async function campaignBlocksBatchCleanup(uploadId: string): Promise<boolean> {
-  const c = await CampaignModel.findOne({ uploadId }).lean();
-  if (c && c.status === "active") return true;
-  return false;
-}

@@ -18,7 +18,8 @@ import { resolveOptimizedVideoPath } from "../lib/optimizeVideoForUpload";
 import { buildStickyProxyForAccount } from "../lib/proxyPlaywright";
 import { ensureStorageJanitorStarted } from "../lib/storageJanitor";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
-import { afterCampaignUploadSuccess, campaignBlocksBatchCleanup } from "../lib/campaignJobQueue";
+import { afterCampaignUploadSuccess } from "../lib/campaignJobQueue";
+import { tryCleanupUploadBatch } from "../lib/tmpUploadCleanup";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -36,21 +37,8 @@ function samePageChainEnabled(): boolean {
 
 const busyAccountIds = new Set<string>();
 
-async function cleanupBatchIfLast(uploadId: string) {
-  try {
-    if (await campaignBlocksBatchCleanup(uploadId)) return;
-
-    const remaining = await UploadModel.countDocuments({
-      uploadId,
-      status: { $in: ["pending", "uploading"] },
-    });
-    if (remaining > 0) return;
-
-    const batchDir = path.join(process.cwd(), "storage", "tmp-uploads", uploadId);
-    await fs.rm(batchDir, { recursive: true, force: true });
-  } catch {
-    // best-effort
-  }
+function cleanupBatchIfLast(uploadId: string) {
+  return tryCleanupUploadBatch(uploadId);
 }
 
 function resolveUploadVideoPath(uploadId: string, doc: any): string {
