@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { AccountsListExplain } from "@/components/AccountsListExplain";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
+import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
 
 type Account = { id: string; username: string; hasSession?: boolean };
 
@@ -50,14 +51,14 @@ export default function UploadPage() {
   } | null>(null);
 
   useEffect(() => {
-    fetch("/api/accounts").then(async (r) => {
-      if (r.status === 401) {
+    void (async () => {
+      const { res, data } = await fetchAllAccountsForSelectors();
+      if (res.status === 401) {
         window.location.href = "/login";
         return;
       }
-      const data = await r.json();
-      if (r.ok) {
-        const list = Array.isArray(data) ? data : data.accounts ?? [];
+      if (res.ok) {
+        const list = data.accounts ?? [];
         setAccounts(
           list.map((a: any) => ({
             id: a.id,
@@ -77,6 +78,7 @@ export default function UploadPage() {
             totalInDatabase: data.totalInDatabase,
             listScope: data.listScope,
             maxLinkedAccounts: data.maxLinkedAccounts,
+            listTotal: data.listTotal,
           },
           "upload page"
         );
@@ -88,7 +90,7 @@ export default function UploadPage() {
           });
         }
       }
-    });
+    })();
   }, []);
 
   useEffect(() => {

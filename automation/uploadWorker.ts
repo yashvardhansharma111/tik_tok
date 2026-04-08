@@ -17,7 +17,15 @@ import {
   setCachedSound,
   type CachedSoundEntry,
 } from "@/lib/soundCache";
-import { humanPause, humanScroll, scaledHumanRand, scaledMusicRand, typeTextLikeHuman } from "@/lib/humanBehavior";
+import {
+  getHumanTimingScale,
+  getMusicTimingScale,
+  humanPause,
+  humanScroll,
+  scaledHumanRand,
+  scaledMusicRand,
+  typeTextLikeHuman,
+} from "@/lib/humanBehavior";
 
 const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en";
 
@@ -228,6 +236,15 @@ type FlowContext = {
   pauseIfDebug: (page: Page, reason: string) => Promise<void>;
 };
 
+/**
+ * Structured timing: (1) area+phase (2) duration (3) why + knobs — always logged to console + flow.log.
+ */
+function flowTiming(ctx: FlowContext, area: "music" | "post", phase: string, ms: number, reason: string, knobs?: string): void {
+  const sec = (ms / 1000).toFixed(2);
+  const tail = knobs && knobs.length > 0 ? ` | knobs=${knobs}` : "";
+  ctx.flow(`[timing][${area}] ${phase} | ${sec}s | reason=${reason}${tail}`);
+}
+
 function createFlowContext(username: string): FlowContext {
   const safe = username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
   const runId = `${Date.now()}-${safe}`;
@@ -287,7 +304,7 @@ function isTransientProxyNavigationError(e: unknown): boolean {
  */
 async function gotoTikTokUploadWithRetries(page: Page, ctx: FlowContext, url: string): Promise<void> {
   const max = Math.max(1, Math.min(6, Number(process.env.UPLOAD_GOTO_RETRIES || 3)));
-  const delayMs = Math.max(300, Number(process.env.UPLOAD_GOTO_RETRY_DELAY_MS || 5000));
+  const delayMs = Math.max(300, Number(process.env.UPLOAD_GOTO_RETRY_DELAY_MS || 3200));
   let lastErr: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
     try {
@@ -427,7 +444,7 @@ async function waitForCaptionEditorVisible(
       await humanScroll(page);
       await humanPause(page);
     }
-    await page.waitForTimeout(scaledHumanRand(2200, 3400));
+    await page.waitForTimeout(scaledHumanRand(380, 680));
   }
   ctx.flow("caption editor NOT visible within timeout");
   return null;
@@ -906,7 +923,7 @@ async function waitForSoundPanelReady(
         );
         lastDiagTs = now;
       }
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(220);
       continue;
     }
 
@@ -936,7 +953,7 @@ async function waitForSoundPanelReady(
       return { mode: "list", panelRoot };
     }
 
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(220);
   }
   ctx.flow("[music] panel wait timeout");
   return null;
@@ -973,7 +990,7 @@ async function waitForSoundResultsInRoot(
     if (await opt.isVisible().catch(() => false)) return;
     const row = panelRoot.locator('[role="listbox"] button, [role="grid"] button').first();
     if (await row.isVisible().catch(() => false)) return;
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(220);
   }
   throw new Error("Sound results not visible in time");
 }
@@ -1162,7 +1179,7 @@ async function clickSuggestionFromDom(
 
   ctx.flow(`[music] suggestion clicked via DOM: "${(domSuggestions.text || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
-  await page.waitForTimeout(scaledMusicRand(700, 1200));
+  await page.waitForTimeout(scaledMusicRand(280, 480));
   return true;
 }
 
@@ -1223,7 +1240,7 @@ async function tryClickMatchingSuggestion(
     return false;
   }
 
-  await page.waitForTimeout(scaledMusicRand(220, 520));
+  await page.waitForTimeout(scaledMusicRand(100, 220));
 let clickable = best.loc.locator(
   'button, [role="button"]'
 ).first();
@@ -1351,7 +1368,7 @@ async function runSearchInPanel(
   const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
   await searchInput.press(selectAll).catch(() => {});
   await searchInput.press("Backspace").catch(() => {});
-  await page.waitForTimeout(scaledMusicRand(180, 320));
+  await page.waitForTimeout(scaledMusicRand(90, 180));
 
   const isLongOrIdLike = term.length >= 26 || /\d{8,}/.test(term) || (term.includes("-") && /\d/.test(term));
   if (isLongOrIdLike) {
@@ -1359,14 +1376,14 @@ async function runSearchInPanel(
     ctx.flow(`[music] search (fast fill): "${short}"`);
     await searchInput.fill(term).catch(async () => {
       // Some Studio builds block fill(); fall back to typing quickly.
-      await searchInput.type(term, { delay: scaledMusicRand(5, 18) });
+      await searchInput.type(term, { delay: scaledMusicRand(2, 8) });
     });
-    await page.waitForTimeout(scaledMusicRand(450, 850));
+    await page.waitForTimeout(scaledMusicRand(180, 380));
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
-    await page.waitForTimeout(scaledMusicRand(900, 1500));
+    await page.waitForTimeout(scaledMusicRand(320, 580));
     await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(scaledMusicRand(220, 420));
+    await page.waitForTimeout(scaledMusicRand(100, 220));
     await page.keyboard.press("Escape").catch(() => {});
     await panelRoot.click({ force: true }).catch(() => {});
     return;
@@ -1377,26 +1394,25 @@ async function runSearchInPanel(
   for (let i = 0; i < term.length; i++) {
     throwIfAborted(signal);
     const ch = term[i];
-    // TikTok suggestions/results can be flaky if we type too fast.
-    await searchInput.type(ch, { delay: scaledMusicRand(25, 70) });
+    await searchInput.type(ch, { delay: scaledMusicRand(8, 22) });
     typed += ch;
-    await page.waitForTimeout(scaledMusicRand(220, 420));
+    await page.waitForTimeout(scaledMusicRand(85, 180));
 
     const trimmed = typed.trim();
     if (trimmed.length < 6) continue;
     const shouldProbe = /\s/.test(ch) || i === term.length - 1 || i % 4 === 3;
     if (!shouldProbe) continue;
 
-    await page.waitForTimeout(scaledMusicRand(260, 520));
+    await page.waitForTimeout(scaledMusicRand(110, 240));
     const clickedSuggestion = await tryClickMatchingSuggestion(page, searchInput, panelRoot, term, trimmed, ctx);
     if (clickedSuggestion) {
       // Submit to ensure results load and suggestion dropdown collapses.
       await searchInput.press("Enter").catch(() => {});
       await page.keyboard.press("Enter").catch(() => {});
       ctx.flow("[music] search: pressed Enter after suggestion click");
-      await page.waitForTimeout(scaledMusicRand(650, 1100));
+      await page.waitForTimeout(scaledMusicRand(260, 480));
       await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(scaledMusicRand(220, 420));
+      await page.waitForTimeout(scaledMusicRand(90, 200));
       await page.keyboard.press("Escape").catch(() => {});
       await panelRoot.click({ force: true }).catch(() => {});
       return;
@@ -1413,21 +1429,20 @@ async function runSearchInPanel(
   ctx.flow(`[music] search: "${short}"`);
   const typedValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] search input value now: "${(typedValue || "").slice(0, 80)}"`);
-  // Give TikTok a moment to populate results after the full query is present.
-  await page.waitForTimeout(scaledMusicRand(1600, 2600));
-  await page.waitForTimeout(scaledMusicRand(700, 1200));
+  await page.waitForTimeout(scaledMusicRand(380, 650));
+  await page.waitForTimeout(scaledMusicRand(240, 420));
   // Always submit the query with Enter to collapse the suggestions dropdown.
   await searchInput.press("Enter").catch(() => {});
   await page.keyboard.press("Enter").catch(() => {});
   ctx.flow("[music] search: pressed Enter");
-  await page.waitForTimeout(scaledMusicRand(650, 1100));
+  await page.waitForTimeout(scaledMusicRand(280, 480));
 
   // If still no visible results and no explicit "no results" message, press Enter again.
   if (!(await panelHasVisibleSoundResults(panelRoot)) && !(await panelShowsNoResults(panelRoot))) {
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
     ctx.flow("[music] search: pressed Enter fallback");
-    await page.waitForTimeout(scaledMusicRand(900, 1500));
+    await page.waitForTimeout(scaledMusicRand(380, 650));
   }
 
   // Suggestions dropdown can overlay the results list (and Plus buttons) — dismiss it.
@@ -1517,9 +1532,14 @@ async function dismissOpenSoundUi(page: Page, ctx: FlowContext): Promise<void> {
 }
 
 async function waitForVideoPreviewStableBeforeSound(page: Page, ctx: FlowContext, timeoutMs: number): Promise<void> {
+  const t0 = Date.now();
   const deadline = Date.now() + timeoutMs;
+  const pollMs = Math.max(250, Number(process.env.TIKTOK_MUSIC_PREVIEW_POLL_MS || 380));
+  let polls = 0;
+  let exit: "media_ready" | "caption_soft" | "timeout" = "timeout";
   ctx.flow("[music] wait: preview / stable composer before opening sound");
   while (Date.now() < deadline) {
+    polls += 1;
     const vidOk = await page.locator("video").first().isVisible().catch(() => false);
     const canvasOk = await page.locator("canvas").first().isVisible().catch(() => false);
     const busy = await page
@@ -1530,15 +1550,32 @@ async function waitForVideoPreviewStableBeforeSound(page: Page, ctx: FlowContext
     const captionOk = await page.locator('[contenteditable="true"]').first().isVisible().catch(() => false);
     if (!busy && captionOk && (vidOk || canvasOk)) {
       ctx.flow("[music] ready: media + caption, no busy copy");
-      return;
+      exit = "media_ready";
+      break;
     }
     if (!busy && captionOk) {
       ctx.flow("[music] ready: caption + no busy copy (soft)");
-      return;
+      exit = "caption_soft";
+      break;
     }
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(pollMs);
   }
-  ctx.flow("[music] preview wait timed out — opening sound anyway");
+  if (exit === "timeout") {
+    ctx.flow("[music] preview wait timed out — opening sound anyway");
+  }
+  const ms = Date.now() - t0;
+  flowTiming(
+    ctx,
+    "music",
+    "music_preview_wait",
+    ms,
+    exit === "timeout"
+      ? `hit cap waiting for video/canvas + caption (still polling each ~${pollMs}ms)`
+      : exit === "media_ready"
+        ? "video or canvas visible with caption and no busy copy"
+        : "caption visible, no busy copy (soft gate)",
+    `polls=${polls} TIKTOK_MUSIC_PREVIEW_POLL_MS=${pollMs} capMs=${timeoutMs} HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+  );
 }
 
 async function trySelectCachedSound(
@@ -1783,7 +1820,7 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
       ctx.flow(
         "[music][audio] clicked: PlusBold in front visible dialog — TikTok sometimes needs this before Save/Use"
       );
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(120);
     }
 
     const saveInDialog = frontDialog.getByRole("button", { name: /^save$/i }).first();
@@ -1819,7 +1856,7 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
         return true;
       }
     }
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(180);
   }
   ctx.flow("[music][audio] apply: no Save/Use/Confirm/PlusBold matched within timeout — one-step UI or manual");
   return false;
@@ -1835,18 +1872,18 @@ async function clickPostConfirmDialogsIfPresent(page: Page, ctx: FlowContext, ti
       if ((await btnInDialog.isVisible().catch(() => false)) && !(await btnInDialog.isDisabled().catch(() => true))) {
         ctx.flow(`[post] confirm: clicking dialog button /${re.source}/i`);
         await btnInDialog.click({ force: true }).catch(() => {});
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(380);
         return true;
       }
       const btnGlobal = page.getByRole("button", { name: re }).first();
       if ((await btnGlobal.isVisible().catch(() => false)) && !(await btnGlobal.isDisabled().catch(() => true))) {
         ctx.flow(`[post] confirm: clicking global button /${re.source}/i`);
         await btnGlobal.click({ force: true }).catch(() => {});
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(380);
         return true;
       }
     }
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(220);
   }
   return false;
 }
@@ -1863,8 +1900,7 @@ async function tryQuickAddAndSaveAfterSearch(
   ctx: FlowContext,
   timeoutMs: number
 ): Promise<boolean> {
-  // TikTok often renders rows / Plus buttons a bit after the query is set.
-  await page.waitForTimeout(scaledMusicRand(900, 1700));
+  await page.waitForTimeout(scaledMusicRand(280, 520));
   const raw = await harvestSoundCandidates(panelRoot, ctx);
   const ranked = rankTopFiveScored(raw, musicQuery, ctx);
   if (ranked.length === 0) {
@@ -1896,7 +1932,7 @@ async function tryQuickAddAndSaveAfterSearch(
       ctx.flow(
         "[music][audio] quick-add: clicked PlusBold inside best row locator (not global) — adds that sound"
       );
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(120);
 
       const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
       if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
@@ -1913,7 +1949,7 @@ async function tryQuickAddAndSaveAfterSearch(
       }
     }
 
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(120);
   }
 
   ctx.flow("[music][audio] quick-add: PlusBold on best row or Save not found in time");
@@ -1927,7 +1963,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
   timeoutMs: number,
   signal?: AbortSignal
 ): Promise<{ ok: boolean; pickedText?: string }> {
-  await page.waitForTimeout(scaledMusicRand(900, 1700));
+  await page.waitForTimeout(scaledMusicRand(280, 520));
   await page.keyboard.press("Escape").catch(() => {});
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1953,7 +1989,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
       ctx.flow(
         `[music][audio] relaxed quick-add: clicked PlusBold #${i + 1}/${n} (0-based index ${i}); row text preview "${pickedText.slice(0, 90)}${pickedText.length > 90 ? "…" : ""}"`
       );
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(120);
 
       const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
       if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
@@ -1970,7 +2006,7 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
       }
     }
 
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(160);
   }
 
   ctx.flow("[music][audio] relaxed quick-add: no PlusBold+Save combo worked in time");
@@ -1984,6 +2020,7 @@ async function executeOneSoundAttempt(
   accountUsername: string,
   signal?: AbortSignal
 ): Promise<{ ok: boolean; soundLabel?: string }> {
+  const tAttempt = Date.now();
   const q = musicQuery.trim();
   await dismissStopCopyrightDialog(page, ctx, "before-open-sound");
 
@@ -1991,6 +2028,7 @@ async function executeOneSoundAttempt(
   if (!openBtn) throw new Error("Add sound control not found");
 
   ctx.flow("[music][audio] opening sound panel: clicking Add sound control from composer (see earlier [music] open lines)");
+  const tPanel = Date.now();
   await openBtn.click({ force: true });
   ctx.flow("[music] open: clicked sound control");
   await dismissStopCopyrightDialog(page, ctx, "after-open-sound-click");
@@ -1999,7 +2037,7 @@ async function executeOneSoundAttempt(
   let panel = await waitForSoundPanelReady(page, ctx, 35000, signal);
   if (!panel && !signal?.aborted) {
     ctx.flow("[music] open: first wait failed, retry opening panel once");
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(380);
     await openBtn.click({ force: true }).catch(() => {});
     await musicDebugShot(ctx, page, "step-music-open-retry.png");
     panel = await waitForSoundPanelReady(page, ctx, 20000, signal);
@@ -2010,13 +2048,31 @@ async function executeOneSoundAttempt(
   }
 
   const workingPanel = await coerceListPanelToSearch(page, panel, ctx);
+  flowTiming(
+    ctx,
+    "music",
+    "music_panel_open",
+    Date.now() - tPanel,
+    "click Add sound → waitForSoundPanelReady (polls ~220ms) + coerceListPanelToSearch",
+    `TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
+  );
 
   // Preferred fast path for the current UI shape user shared.
   if (workingPanel.mode === "search") {
+    const tSearch = Date.now();
     await runSearchInPanel(page, workingPanel.searchInput, workingPanel.panelRoot, q, ctx, signal);
+    flowTiming(
+      ctx,
+      "music",
+      "music_search_type_primary",
+      Date.now() - tSearch,
+      "typed/filled search query + suggestion probes + Enter; delays use scaledMusicRand",
+      `queryLen=${q.length} TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
+    );
 
     // Always try the relaxed Plus/Save path first for the primary query.
     // This prevents premature fallback when results exist but scoring/rows are flaky.
+    const tRelaxed = Date.now();
     const relaxedPrimary = await tryQuickAddAndSaveRelaxedAfterSearch(
       page,
       workingPanel.panelRoot,
@@ -2024,21 +2080,63 @@ async function executeOneSoundAttempt(
       14000,
       signal
     );
+    flowTiming(
+      ctx,
+      "music",
+      "music_relaxed_plus_save_primary",
+      Date.now() - tRelaxed,
+      relaxedPrimary.ok
+        ? "Plus+Save succeeded for primary query"
+        : "looped until 14000ms timeout scanning PlusBold rows in panel",
+      `timeoutBudgetMs=14000 TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
+    );
     if (relaxedPrimary.ok) {
+      const tVer = Date.now();
       const okRelaxedPrimary = await verifySoundAppliedStrict(page, q, ctx, relaxedPrimary.pickedText);
+      flowTiming(
+        ctx,
+        "music",
+        "music_verify_after_relaxed",
+        Date.now() - tVer,
+        okRelaxedPrimary ? "picker closed / title matched" : "sound not confirmed in composer"
+      );
       ctx.flow(`[music] primary selected: ${relaxedPrimary.pickedText || "(unknown)"}`);
       if (okRelaxedPrimary) {
         setCachedSound(accountUsername, q, relaxedPrimary.pickedText || q);
+        flowTiming(
+          ctx,
+          "music",
+          "music_execute_one_attempt_total",
+          Date.now() - tAttempt,
+          "success via relaxed Plus/Save path",
+          `TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
+        );
         return { ok: true, soundLabel: relaxedPrimary.pickedText || q };
       }
     }
 
+    const tQuick = Date.now();
     const quickApplied = await tryQuickAddAndSaveAfterSearch(page, workingPanel.panelRoot, q, ctx, 12000);
+    flowTiming(
+      ctx,
+      "music",
+      "music_quick_add_ranked",
+      Date.now() - tQuick,
+      quickApplied ? "best-scored row Plus+Save" : "no Plus/Save within 12000ms or score below threshold",
+      `MUSIC_QUICK_ADD_MIN_SCORE=${MUSIC_QUICK_ADD_MIN_SCORE}`
+    );
     if (quickApplied) {
       const okQuick = await verifySoundAppliedStrict(page, q, ctx);
       ctx.flow(`[music] quick add verify: ${okQuick ? "applied" : "not confirmed"}`);
       if (okQuick) {
         setCachedSound(accountUsername, q, q);
+        flowTiming(
+          ctx,
+          "music",
+          "music_execute_one_attempt_total",
+          Date.now() - tAttempt,
+          "success via ranked quick-add path"
+        );
         return { ok: true, soundLabel: q };
       }
     }
@@ -2052,6 +2150,7 @@ async function executeOneSoundAttempt(
       return arr;
     })();
 
+    const tFallback = Date.now();
     for (const keyword of shuffledFallbackKeywords.slice(0, 5)) {
       throwIfAborted(signal);
       ctx.flow(`[music] trying fallback: ${keyword}`);
@@ -2062,14 +2161,38 @@ async function executeOneSoundAttempt(
         ctx.flow(`[music] fallback selected: ${relaxed.pickedText || "(unknown)"}`);
         if (okRelaxed) {
           setCachedSound(accountUsername, q, relaxed.pickedText || keyword);
+          flowTiming(
+            ctx,
+            "music",
+            "music_fallback_keywords_loop",
+            Date.now() - tFallback,
+            `success on keyword "${keyword}"`,
+            "up to 5 keywords × (search + relaxed 14s)"
+          );
+          flowTiming(
+            ctx,
+            "music",
+            "music_execute_one_attempt_total",
+            Date.now() - tAttempt,
+            "success via fallback keyword search"
+          );
           return { ok: true, soundLabel: relaxed.pickedText || keyword };
         }
       }
     }
+    flowTiming(
+      ctx,
+      "music",
+      "music_fallback_keywords_loop",
+      Date.now() - tFallback,
+      "no fallback keyword produced a verified sound",
+      "up to 5 keywords"
+    );
 
     ctx.flow("[music] quick add path did not finalize, falling back to scored selection");
   }
 
+  const tScored = Date.now();
   const cached = getCachedSound(accountUsername, q);
   let pick: { loc: PwLocator; text: string } | null = null;
   let usedCache = false;
@@ -2089,8 +2212,7 @@ async function executeOneSoundAttempt(
   await pick.loc.click({ force: true });
   ctx.flow("[music][audio] clicked: sound row root (data-e2e sound row or option) — selects/highlight row");
 
-  // Let TikTok update the row state before trying to click +/apply.
-  await page.waitForTimeout(scaledMusicRand(650, 1200));
+  await page.waitForTimeout(scaledMusicRand(240, 420));
 
   // Some TikTok Studio variants require clicking the row's Plus button instead of the row itself.
   // Try it opportunistically before looking for global/dialog apply buttons.
@@ -2105,7 +2227,7 @@ async function executeOneSoundAttempt(
     `[music][audio] in-row PlusBold: visible=${plusVisible} disabled=${plusDisabled} — if visible, click adds this row's sound (avoids wrong global Plus)`
   );
   if (plusVisible && !plusDisabled) {
-    await page.waitForTimeout(scaledMusicRand(650, 1200));
+    await page.waitForTimeout(scaledMusicRand(240, 420));
     await plusInRow.click({ force: true }).catch(() => {});
     ctx.flow("[music][audio] clicked: PlusBold inside same row locator — adds audio from that row");
     await page.waitForTimeout(250);
@@ -2113,23 +2235,48 @@ async function executeOneSoundAttempt(
 
   await musicDebugShot(ctx, page, "step-music-selected.png");
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(220);
+  const tApply = Date.now();
   const appliedBtn = await clickApplySoundIfPresent(page, ctx, 10000);
+  flowTiming(
+    ctx,
+    "music",
+    "music_click_apply_sound_poll",
+    Date.now() - tApply,
+    appliedBtn ? "Save/Use/Confirm clicked" : "no matching button within 10000ms (180ms poll)",
+    "clickApplySoundIfPresent"
+  );
   if (!appliedBtn) {
     ctx.flow("[music][audio] no explicit Save/Use after row — TikTok may apply on row+Plus only");
   }
 
   const ok = await verifySoundAppliedStrict(page, q, ctx, pick.text);
   ctx.flow(`[music] verify result: ${ok ? "applied" : "not confirmed"}`);
+  flowTiming(
+    ctx,
+    "music",
+    "music_pick_rank_click_apply_total",
+    Date.now() - tScored,
+    ok ? "scored pick + row clicks + apply + verify OK" : "scored path finished without verify",
+    `usedCache=${usedCache}`
+  );
   if (ok) {
     setCachedSound(accountUsername, q, pick.text);
     ctx.flow(`[music] cached selected sound for query "${q.slice(0, 60)}"`);
+    flowTiming(
+      ctx,
+      "music",
+      "music_execute_one_attempt_total",
+      Date.now() - tAttempt,
+      "success via scored row + apply"
+    );
     return { ok: true, soundLabel: pick.text };
   }
   if (usedCache) {
     invalidateCachedSound(accountUsername, q);
     ctx.flow("[music] invalidated stale cache entry");
   }
+  flowTiming(ctx, "music", "music_execute_one_attempt_total", Date.now() - tAttempt, "attempt ended without verified sound");
   return { ok: false };
 }
 
@@ -2145,15 +2292,22 @@ async function tryAddSoundToVideo(
 ): Promise<string | undefined> {
   const q = musicQuery.trim();
   if (!q) return undefined;
+  const tMusicPipeline = Date.now();
   ctx.flow(`[music] requested query: "${q.slice(0, 80)}"`);
   await dismissStopCopyrightDialog(page, ctx, "before-sound-flow");
   await dismissAutomaticContentChecksOfferDialog(page, ctx, "before-sound-flow");
 
-  const baseSoundBudgetMs = Number(process.env.TIKTOK_SOUND_FLOW_MS || 40000);
-  const soundBudgetMs = q.toLowerCase() === "trending" ? baseSoundBudgetMs : Math.max(baseSoundBudgetMs, 70000);
+  const baseSoundBudgetMs = Number(process.env.TIKTOK_SOUND_FLOW_MS || 32000);
+  const soundBudgetMs = q.toLowerCase() === "trending" ? baseSoundBudgetMs : Math.max(baseSoundBudgetMs, 52000);
+  const previewCapMs = Math.min(120000, Math.max(25000, Number(process.env.TIKTOK_MUSIC_PREVIEW_WAIT_MS || 52000)));
+  let soundFlowBudgetStartedAt: number | undefined;
 
   try {
-    await waitForVideoPreviewStableBeforeSound(page, ctx, 90000);
+    ctx.flow(
+      `[timing][music] config | n/a | reason=active knobs for this run | TIKTOK_SOUND_FLOW_MS=${baseSoundBudgetMs} effectiveSoundBudgetMs=${soundBudgetMs} TIKTOK_MUSIC_PREVIEW_WAIT_MS_cap=${previewCapMs} TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()} HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+    );
+
+    await waitForVideoPreviewStableBeforeSound(page, ctx, previewCapMs);
 
     if (flowDebugOn()) {
       ctx.debug("[music] selector probe before open");
@@ -2161,13 +2315,14 @@ async function tryAddSoundToVideo(
       await logModals(page, ctx);
     }
 
+    soundFlowBudgetStartedAt = Date.now();
     const label = await withSoundFlowTimeout(soundBudgetMs, async (signal) => {
       let r = await executeOneSoundAttempt(page, q, ctx, accountUsername, signal);
       const musicRetry = process.env.TIKTOK_MUSIC_RETRY === "1";
       if (!r.ok && musicRetry) {
         ctx.flow("[music] verification failed — retry once (TIKTOK_MUSIC_RETRY=1)");
         await dismissOpenSoundUi(page, ctx);
-        await humanPause(page, 1400, 2600);
+        await humanPause(page, 280, 520);
         r = await executeOneSoundAttempt(page, q, ctx, accountUsername, signal);
       }
       if (r.ok && r.soundLabel) {
@@ -2181,9 +2336,37 @@ async function tryAddSoundToVideo(
       }
       throw new Error("Sound not verified after retry");
     });
+    flowTiming(
+      ctx,
+      "music",
+      "music_sound_flow_budgeted",
+      Date.now() - soundFlowBudgetStartedAt,
+      "withSoundFlowTimeout block finished (panel→search→apply→verify; may include TIKTOK_MUSIC_RETRY second attempt)",
+      `budgetMs=${soundBudgetMs} TIKTOK_MUSIC_RETRY=${process.env.TIKTOK_MUSIC_RETRY === "1" ? "1" : "0"}`
+    );
+    flowTiming(
+      ctx,
+      "music",
+      "music_tryAddSoundToVideo_total",
+      Date.now() - tMusicPipeline,
+      "full music step: config + preview wait + budgeted sound flow (what users perceive as ‘music’ time)",
+      `effectiveSoundBudgetMs=${soundBudgetMs}`
+    );
     return label;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (soundFlowBudgetStartedAt != null) {
+      flowTiming(
+        ctx,
+        "music",
+        "music_sound_flow_budgeted",
+        Date.now() - soundFlowBudgetStartedAt,
+        msg === "SOUND_FLOW_TIMEOUT"
+          ? `aborted: hit TIKTOK_SOUND_FLOW_MS budget (${soundBudgetMs}ms)`
+          : `ended with error: ${msg.slice(0, 120)}`,
+        `budgetMs=${soundBudgetMs}`
+      );
+    }
     if (isClosedTargetError(e)) {
       ctx.flow("[music] aborted: page/context closed");
       throw e;
@@ -2195,6 +2378,13 @@ async function tryAddSoundToVideo(
       console.warn("[MUSIC] Failed, continuing without sound", msg);
     }
     await dismissOpenSoundUi(page, ctx).catch(() => {});
+    flowTiming(
+      ctx,
+      "music",
+      "music_tryAddSoundToVideo_total",
+      Date.now() - tMusicPipeline,
+      "music step ended without verified sound (see prior [timing][music] lines)"
+    );
     return undefined;
   }
 }
@@ -2206,7 +2396,10 @@ async function waitForPostButtonEnabled(
 ): Promise<import("playwright").Locator | null> {
   ctx.flow("wait: Post button visible and enabled");
   const start = Date.now();
+  const pollMs = Math.max(280, Number(process.env.UPLOAD_POST_POLL_MS || 480));
+  let polls = 0;
   while (Date.now() - start < timeoutMs) {
+    polls += 1;
     await dismissStopCopyrightDialog(page, ctx, "wait-post-button");
     const candidate = page.locator(TIKTOK_STUDIO_SELECTORS.postButton).first();
     const visible = await candidate.isVisible().catch(() => false);
@@ -2214,10 +2407,28 @@ async function waitForPostButtonEnabled(
     ctx.debug(`post poll: visible=${visible} disabled=${disabled}`);
     if (visible && !disabled) {
       ctx.flow("Post button active");
+      const elapsed = Date.now() - start;
+      flowTiming(
+        ctx,
+        "post",
+        "post_wait_button_enabled",
+        elapsed,
+        "Post button became visible and enabled (TikTok finishes processing / checks)",
+        `polls=${polls} pollMs=${pollMs} timeoutCapMs=${timeoutMs} UPLOAD_POST_BUTTON_TIMEOUT_MS env may cap this HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+      );
       return candidate;
     }
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(pollMs);
   }
+  const elapsed = Date.now() - start;
+  flowTiming(
+    ctx,
+    "post",
+    "post_wait_button_enabled",
+    elapsed,
+    "timeout — button stayed hidden or disabled (video still processing, toggles, or Studio blocked)",
+    `polls=${polls} pollMs=${pollMs} timeoutCapMs=${timeoutMs}`
+  );
   ctx.flow("Post button did not become active in time");
   return null;
 }
@@ -2242,7 +2453,7 @@ function isToggleOn(el: import("playwright").Locator): Promise<boolean> {
  */
 async function turnOffCopyrightAndContentCheckToggles(
   page: import("playwright").Page,
-  maxMsPerPattern = 60000,
+  maxMsPerPattern = 42000,
   ctx?: FlowContext
 ): Promise<void> {
   const log = ctx?.flow ?? ((s: string) => console.log(`[FLOW] ${s}`));
@@ -2332,7 +2543,7 @@ async function turnOffCopyrightAndContentCheckToggles(
         }
       }
 
-      await page.waitForTimeout(scaledHumanRand(2200, 3800));
+      await page.waitForTimeout(scaledHumanRand(420, 780));
     }
     if (!switchedOff) {
       log(`toggles: failed to turn off ${pattern}`);
@@ -2397,8 +2608,8 @@ async function runStudioUploadPipeline(
 ): Promise<TikTokUploadRunResult> {
   let soundUsed: string | undefined;
 
-  ctx.flow("human: pause before choosing file");
-  await humanPause(page);
+  ctx.flow("human: brief pause before choosing file");
+  await humanPause(page, 120, 280);
   await humanScroll(page);
 
   ctx.flow("video upload: setInputFiles on file input");
@@ -2406,10 +2617,11 @@ async function runStudioUploadPipeline(
   await fileInput.setInputFiles(videoPath);
   ctx.flow("setInputFiles dispatched");
 
-  for (let i = 0; i < 5; i++) {
+  const settleLoops = Math.max(2, Math.min(5, Number(process.env.UPLOAD_AFTER_FILE_SETTLE_LOOPS || 3)));
+  for (let i = 0; i < settleLoops; i++) {
     await dismissAutomaticContentChecksOfferDialog(page, ctx, `post-set-input-${i}`);
     await dismissStopCopyrightDialog(page, ctx, `post-set-input-${i}`);
-    await page.waitForTimeout(scaledHumanRand(650, 1200));
+    await page.waitForTimeout(scaledHumanRand(220, 420));
   }
 
   await logUploadProgressHints(page, ctx);
@@ -2425,15 +2637,14 @@ async function runStudioUploadPipeline(
   await ctx.pauseIfDebug(page, "after upload completes (caption area visible)");
 
   if (captionBox && (await captionBox.isVisible().catch(() => false))) {
-    ctx.flow("caption: focus and type (human-like)");
-    await humanPause(page);
+    ctx.flow("caption: fill (fast unless TIKTOK_CAPTION_TYPE_HUMAN=1)");
+    await page.waitForTimeout(scaledHumanRand(80, 180));
     await humanScroll(page);
     await captionBox.click({ force: true });
-    await page.waitForTimeout(scaledHumanRand(400, 900));
-    await captionBox.fill("");
+    await page.waitForTimeout(scaledHumanRand(120, 240));
     await typeTextLikeHuman(page, captionBox, caption);
     ctx.flow("caption filled");
-    await humanPause(page);
+    await page.waitForTimeout(scaledHumanRand(60, 140));
   } else {
     ctx.flow("caption: editor missing — skip fill (failure likely)");
   }
@@ -2457,45 +2668,95 @@ async function runStudioUploadPipeline(
     ctx.flow("music: no musicQuery — skip sound selection");
   }
 
+  const tPostPhase = Date.now();
+  const postPollMs = Math.max(280, Number(process.env.UPLOAD_POST_POLL_MS || 480));
+  const postBtnTimeoutCap = Math.min(240000, Number(process.env.UPLOAD_POST_BUTTON_TIMEOUT_MS || 120000));
+  ctx.flow(
+    `[timing][post] config | n/a | reason=active knobs for post phase | UPLOAD_POST_POLL_MS=${postPollMs} UPLOAD_POST_BUTTON_TIMEOUT_MS_cap=${postBtnTimeoutCap} HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+  );
+
   ctx.flow("toggles: Music copyright + Content check lite → off");
-  await humanPause(page);
-  await turnOffCopyrightAndContentCheckToggles(page, 70000, ctx);
+  await page.waitForTimeout(scaledHumanRand(100, 200));
+  const tToggles1 = Date.now();
+  await turnOffCopyrightAndContentCheckToggles(page, 32000, ctx);
+  flowTiming(
+    ctx,
+    "post",
+    "post_toggles_pass1",
+    Date.now() - tToggles1,
+    "turn off Music copyright + Content check lite (per-toggle loop with scaledHumanRand 420–780ms retries)",
+    `maxMsPerPattern=32000 HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+  );
 
   await logMusicRelatedControls(page, ctx);
-  await humanPause(page);
+  await page.waitForTimeout(scaledHumanRand(80, 160));
   await humanScroll(page);
-  const postBtn = await waitForPostButtonEnabled(page, ctx, 180000);
+  const postBtn = await waitForPostButtonEnabled(page, ctx, postBtnTimeoutCap);
   if (!postBtn) {
+    flowTiming(
+      ctx,
+      "post",
+      "post_phase_total_after_music",
+      Date.now() - tPostPhase,
+      "stopped early: Post button never became active",
+      `see post_wait_button_enabled above`
+    );
     await ctx.shot(page, "step-4-post-never-enabled.png");
     return { success: false, error: "Post button not active", soundUsed };
   }
 
   ctx.flow("toggles: final pass before Post");
-  await humanPause(page);
-  await turnOffCopyrightAndContentCheckToggles(page, 25000, ctx);
+  await page.waitForTimeout(scaledHumanRand(80, 160));
+  const tToggles2 = Date.now();
+  await turnOffCopyrightAndContentCheckToggles(page, 10000, ctx);
+  flowTiming(
+    ctx,
+    "post",
+    "post_toggles_pass2",
+    Date.now() - tToggles2,
+    "final toggle sweep before clicking Post",
+    `maxMsPerPattern=10000`
+  );
 
   await ctx.shot(page, "step-4-before-post.png");
   await ctx.pauseIfDebug(page, "before clicking Post");
 
-  await humanPause(page);
+  const tPostClick = Date.now();
+  await page.waitForTimeout(scaledHumanRand(100, 200));
   await postBtn.click({ force: true });
   ctx.flow("Post clicked");
 
   await clickPostConfirmDialogsIfPresent(page, ctx, 12000);
 
-  await humanPause(page, 2400, 4000);
+  await page.waitForTimeout(scaledHumanRand(220, 420));
 
   const postNow = page.locator(TIKTOK_STUDIO_SELECTORS.postNowConfirm).first();
   if (await postNow.isVisible().catch(() => false)) {
     ctx.flow('confirm modal: "Post now"');
-    await humanPause(page, 1000, 1800);
+    await page.waitForTimeout(scaledHumanRand(120, 240));
     await postNow.click({ force: true });
-    await humanPause(page, 1600, 2800);
+    await page.waitForTimeout(scaledHumanRand(180, 360));
   }
 
   await clickPostConfirmDialogsIfPresent(page, ctx, 8000);
+  flowTiming(
+    ctx,
+    "post",
+    "post_click_confirm_sequence",
+    Date.now() - tPostClick,
+    "Post click + confirm-dialog polls (220ms/380ms steps) + scaledHumanRand pauses + optional Post now",
+    `HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
+  );
 
   if (await detectPostRejectedByTikTok(page, ctx)) {
+    flowTiming(
+      ctx,
+      "post",
+      "post_phase_total_after_music",
+      Date.now() - tPostPhase,
+      "TikTok rejected post (modal) after confirm sequence",
+      `UPLOAD_POST_POLL_MS=${postPollMs}`
+    );
     await ctx.shot(page, "step-post-rejected-modal.png");
     return {
       success: false,
@@ -2504,9 +2765,17 @@ async function runStudioUploadPipeline(
     };
   }
 
-  await humanPause(page, 3200, 5200);
+  await page.waitForTimeout(scaledHumanRand(280, 520));
 
   if (await detectPostRejectedByTikTok(page, ctx)) {
+    flowTiming(
+      ctx,
+      "post",
+      "post_phase_total_after_music",
+      Date.now() - tPostPhase,
+      "TikTok rejected post (late modal)",
+      `UPLOAD_POST_POLL_MS=${postPollMs}`
+    );
     await ctx.shot(page, "step-post-rejected-modal-late.png");
     return {
       success: false,
@@ -2516,6 +2785,14 @@ async function runStudioUploadPipeline(
   }
 
   await ctx.shot(page, "step-5-after-post.png");
+  flowTiming(
+    ctx,
+    "post",
+    "post_phase_total_after_music",
+    Date.now() - tPostPhase,
+    "entire post leg: toggles×2 + wait for enabled Post + click + confirms (typical ~30s if TikTok keeps Post disabled for many polls)",
+    `UPLOAD_POST_POLL_MS=${postPollMs}`
+  );
   ctx.flow("flow complete");
   return { success: true, soundUsed };
 }

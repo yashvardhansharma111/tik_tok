@@ -43,8 +43,8 @@ function sleep(ms: number) {
 
 /** Random delay between chained uploads on the same page (ms). */
 function chainGapMs(): number {
-  const lo = Math.max(0, Number(process.env.UPLOAD_CHAIN_GAP_MIN_MS || 1000));
-  const hi = Math.max(lo, Number(process.env.UPLOAD_CHAIN_GAP_MAX_MS || 3000));
+  const lo = Math.max(0, Number(process.env.UPLOAD_CHAIN_GAP_MIN_MS || 350));
+  const hi = Math.max(lo, Number(process.env.UPLOAD_CHAIN_GAP_MAX_MS || 900));
   return lo + Math.floor(Math.random() * (hi - lo + 1));
 }
 
@@ -305,7 +305,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 
 async function runnerLoop(signal: AbortSignal) {
   const batchSize = getUploadParallelAdminCap();
-  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 2500);
+  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 1400);
   /** Optional pause after a parallel wave finishes (before the next wave). */
   const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
 

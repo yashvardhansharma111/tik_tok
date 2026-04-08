@@ -16,4 +16,11 @@ const AccountSchema = new Schema(
   { timestamps: true }
 );
 
+/** Avoid sort-in-memory on large collections (Mongo 292 QueryExceededMemoryLimitNoDiskUseAllowed). */
+AccountSchema.index({ createdAt: -1 });
+/** Supports list + sort for users matched by legacy ownerId. */
+AccountSchema.index({ ownerId: 1, createdAt: -1 });
+/** Supports list + sort for users matched via ownerIds[]. */
+AccountSchema.index({ ownerIds: 1, createdAt: -1 });
+
 export const AccountModel = models.Account || model("Account", AccountSchema);

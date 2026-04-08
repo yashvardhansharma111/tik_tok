@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import { AccountModel } from "@/lib/models/Account";
@@ -18,7 +18,10 @@ function mapAccount(a: any) {
   };
 }
 
-export async function GET() {
+const ACCOUNTS_DEFAULT_LIMIT = 50;
+const ACCOUNTS_MAX_LIMIT = 2000;
+
+export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -26,12 +29,24 @@ export async function GET() {
   const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
   const isAdmin = (user as { role?: string }).role === "admin";
 
+  const sp = req.nextUrl.searchParams;
+  const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10) || 1);
+  const limitParam = sp.get("limit");
+  const limit =
+    limitParam === null || limitParam === ""
+      ? ACCOUNTS_DEFAULT_LIMIT
+      : Math.min(ACCOUNTS_MAX_LIMIT, Math.max(1, parseInt(limitParam, 10) || ACCOUNTS_DEFAULT_LIMIT));
+  const skip = (page - 1) * limit;
+
   const filter = isAdmin ? {} : accountAccessibleByUser(ownerId);
-  const [accounts, totalInDatabase, linkedCount] = await Promise.all([
-    AccountModel.find(filter).sort({ createdAt: -1 }).lean(),
+  const [accounts, totalInDatabase, linkedCount, listTotal] = await Promise.all([
+    AccountModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     AccountModel.countDocuments({}),
     AccountModel.countDocuments(accountAccessibleByUser(ownerId)),
+    AccountModel.countDocuments(filter),
   ]);
+
+  const totalPages = Math.max(1, Math.ceil(listTotal / limit));
 
   const listScope = isAdmin ? "all_in_database" : "owner_only";
 
@@ -41,6 +56,10 @@ export async function GET() {
 
   console.info("[api/accounts GET]", {
     listCount: accounts.length,
+    listTotal,
+    page,
+    limit,
+    totalPages,
     totalInDatabase,
     linkedCount,
     listScope,
@@ -50,17 +69,21 @@ export async function GET() {
     filter: isAdmin ? "all rows" : "ownerId match",
     whyUiShowsThisMany:
       listScope === "owner_only"
-        ? `UI lists Account rows for this user (${accounts.length}). DB total ${totalInDatabase} (all tenants). ` +
+        ? `UI lists Account rows for this user (page slice ${accounts.length} of ${listTotal}). DB total ${totalInDatabase} (all tenants). ` +
           (maxLinkedAccounts != null
             ? `Admin cap: max ${maxLinkedAccounts} linked for this user (${linkedCount} used).`
             : "No admin cap (unlimited links).") +
           ` Shared TikTok logins use ownerIds; remaining DB rows belong to other users.`
-        : `Admin UI lists all accounts (${accounts.length}). linkedCount is only for the admin user's ownerId (${linkedCount}).`,
+        : `Admin UI lists accounts paginated (${accounts.length} on page of ${listTotal} total). linkedCount is only for the admin user's ownerId (${linkedCount}).`,
   });
   const canAddMore = maxLinkedAccounts == null || linkedCount < maxLinkedAccounts;
 
   return NextResponse.json({
     accounts: accounts.map(mapAccount),
+    page,
+    limit,
+    listTotal,
+    totalPages,
     linkedCount,
     maxLinkedAccounts,
     canAddMore,

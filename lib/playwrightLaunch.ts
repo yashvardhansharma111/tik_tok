@@ -106,9 +106,17 @@ export function getChromiumLaunchOptions(purpose?: PlaywrightPurpose): LaunchOpt
    */
   const useShell =
     parseTruthy(process.env.PLAYWRIGHT_USE_HEADLESS_SHELL) === true;
+  /** Linux VPS/Docker: always use the full bundled Chromium (not chromium-headless-shell) unless shell is explicitly requested — the shell binary often fails with missing libnspr4.so / NSS on slim images. */
+  const linuxAutomationPreferFullChromium =
+    process.platform === "linux" &&
+    purpose === "automation" &&
+    !executablePath &&
+    !useShell;
   const channel: LaunchOptions["channel"] | undefined =
     envChannel ??
-    (headless && !executablePath && !useShell ? ("chromium" as const) : undefined);
+    (linuxAutomationPreferFullChromium || (headless && !executablePath && !useShell)
+      ? ("chromium" as const)
+      : undefined);
 
   const linuxish = useLinuxStyleSandboxArgs();
   const opts: LaunchOptions = {
@@ -138,15 +146,39 @@ export async function launchChromium(purpose: PlaywrightPurpose = "automation"):
   }
 
   const launchOnce = () => chromium.launch(opts);
+
+  const hintLinuxDeps = () => {
+    if (process.platform !== "linux") return;
+    console.error(
+      "[Playwright] Linux: install Chromium OS libraries (fixes libnspr4.so / libnss3 errors). Run on the server:\n" +
+        "  npx playwright install-deps chromium\n" +
+        "Or Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2\n" +
+        "Docker: use `FROM mcr.microsoft.com/playwright:v1.xx.x-jammy` or run install-deps in your image. " +
+        "Unset PLAYWRIGHT_USE_HEADLESS_SHELL unless you have full deps — full `chromium` bundle is used by default for automation on Linux."
+    );
+  };
+
   try {
     return await launchOnce();
   } catch (first) {
     const msg = first instanceof Error ? first.message : String(first);
+    if (/libnspr4|libnss3|loading shared libraries|cannot open shared object file|exitCode=127/i.test(msg)) {
+      hintLinuxDeps();
+      throw first;
+    }
     const retryable =
       /closed|ENOENT|spawn|browser has been closed|Target page|Executable doesn't exist/i.test(msg);
     if (!retryable) throw first;
     console.warn("[Playwright] Launch failed, retrying once:", msg);
     await new Promise((r) => setTimeout(r, 400));
-    return launchOnce();
+    try {
+      return await launchOnce();
+    } catch (second) {
+      const msg2 = second instanceof Error ? second.message : String(second);
+      if (/libnspr4|libnss3|loading shared libraries|cannot open shared object file|exitCode=127/i.test(msg2)) {
+        hintLinuxDeps();
+      }
+      throw second;
+    }
   }
 }

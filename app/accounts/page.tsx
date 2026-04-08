@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { ConnectTikTok } from "@/components/ConnectTikTok";
 import { AccountsListExplain } from "@/components/AccountsListExplain";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
+import {
+  ACCOUNTS_LIST_DEFAULT_LIMIT,
+  fetchAccountsPage,
+} from "@/lib/fetchAccountsClient";
 
 type Account = { id: string; username: string; proxy?: string; status: string; hasSession: boolean };
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(ACCOUNTS_LIST_DEFAULT_LIMIT);
+  const [listTotal, setListTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [accountsListInfo, setAccountsListInfo] = useState<{
     totalInDatabase: number;
     listScope: "owner_only" | "all_in_database";
@@ -28,16 +36,33 @@ export default function AccountsPage() {
   const [importJson, setImportJson] = useState("");
   const [importBusy, setImportBusy] = useState(false);
 
-  const load = async () => {
-    const res = await fetch("/api/accounts");
+  const load = useCallback(async (opts?: { page?: number; pageSize?: number }) => {
+    const p = opts?.page ?? page;
+    const ps = opts?.pageSize ?? pageSize;
+    const { res, data } = await fetchAccountsPage(p, ps);
     if (res.status === 401) {
       window.location.href = "/login";
       return;
     }
-    const data = await res.json();
     if (res.ok) {
-      const list = Array.isArray(data) ? data : data.accounts ?? [];
+      const list: Account[] = (data.accounts ?? []).map((a) => ({
+        id: a.id,
+        username: a.username,
+        proxy: a.proxy ?? "",
+        status: a.status,
+        hasSession: Boolean(a.hasSession),
+      }));
       setAccounts(list);
+      if (typeof data.listTotal === "number") {
+        const listTotalN = data.listTotal;
+        const totalPagesN = typeof data.totalPages === "number" ? data.totalPages : 1;
+        let nextPage = typeof data.page === "number" ? data.page : p;
+        if (nextPage > totalPagesN) nextPage = totalPagesN;
+        if (nextPage < 1) nextPage = 1;
+        setListTotal(listTotalN);
+        setTotalPages(totalPagesN);
+        setPage(nextPage);
+      }
       if (typeof data.totalInDatabase === "number" && (data.listScope === "owner_only" || data.listScope === "all_in_database")) {
         setAccountsListInfo({ totalInDatabase: data.totalInDatabase, listScope: data.listScope });
       } else {
@@ -58,15 +83,18 @@ export default function AccountsPage() {
           totalInDatabase: data.totalInDatabase,
           listScope: data.listScope,
           maxLinkedAccounts: data.maxLinkedAccounts,
+          listTotal: data.listTotal,
+          page: data.page,
+          totalPages: data.totalPages,
         },
         "accounts page"
       );
     }
-  };
+  }, [page, pageSize]);
 
   useEffect(() => {
-    void load();
-  }, []);
+    void load({ page, pageSize });
+  }, [load, page, pageSize]);
 
   useEffect(() => {
     void (async () => {
@@ -94,7 +122,7 @@ export default function AccountsPage() {
       }
       setCaptureUser("");
       setCaptureProxy("");
-      await load();
+      await load({ page, pageSize });
       alert(`Session saved for ${(data as { username?: string }).username ?? "account"} — stored in the database for uploads.`);
     } finally {
       setCaptureBusy(false);
@@ -126,7 +154,7 @@ export default function AccountsPage() {
       setImportUser("");
       setImportProxy("");
       setImportJson("");
-      await load();
+      await load({ page, pageSize });
       alert(`Session saved for ${(data as { username?: string }).username ?? "account"} in the database.`);
     } finally {
       setImportBusy(false);
@@ -137,7 +165,11 @@ export default function AccountsPage() {
     const res = await fetch(`/api/accounts/${id}`, { method: "DELETE" });
     const data = await res.json();
     if (!res.ok) return alert(data.error || "Delete failed");
-    load();
+    if (accounts.length <= 1 && page > 1) {
+      setPage((p) => p - 1);
+    } else {
+      void load({ page, pageSize });
+    }
   };
 
   const inputClass =
@@ -255,10 +287,67 @@ export default function AccountsPage() {
           listCount={accounts.length}
           linkedCount={accountQuota?.linkedCount ?? accounts.length}
           maxLinkedAccounts={accountQuota?.maxLinkedAccounts ?? null}
+          listTotal={listTotal > 0 ? listTotal : undefined}
+          page={listTotal > 0 ? page : undefined}
+          totalPages={listTotal > 0 ? totalPages : undefined}
           className="mt-10 rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400"
         />
       )}
       <h3 className="mt-12 text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Your accounts</h3>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          {listTotal === 0 ? (
+            "No accounts yet."
+          ) : (
+            <>
+              Showing{" "}
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, listTotal)}
+              </span>{" "}
+              of <span className="font-semibold text-zinc-900 dark:text-zinc-100">{listTotal}</span>
+            </>
+          )}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+            <span className="sr-only sm:not-sr-only">Per page</span>
+            <select
+              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              value={pageSize}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setPageSize(n);
+                setPage(1);
+              }}
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </label>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={page <= 1}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <span className="px-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
       <ul className="mt-4 space-y-3">
         {accounts.map((a) => (
           <li

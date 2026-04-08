@@ -29,6 +29,22 @@ After `npm install`, browsers are installed via the `postinstall` script (`playw
 npx playwright install-deps chromium
 ```
 
+### Linux: `libnspr4.so` / “Target page, context or browser has been closed”
+
+If logs show `error while loading shared libraries: libnspr4.so: No such file or directory` or `exitCode=127`, the **host is missing NSS/Chromium dependencies** (common on minimal Docker images or Alpine without deps).
+
+1. On **Debian/Ubuntu** (as root, or in your Dockerfile):
+
+   ```bash
+   npx playwright install-deps chromium
+   ```
+
+   Or install packages manually, e.g. `libnss3`, `libnspr4`, `libgbm1`, `libasound2`, `libatk1.0-0`, etc. (Playwright’s command above picks the right set).
+
+2. Prefer a **Playwright base image** for Docker, e.g. `mcr.microsoft.com/playwright:v1.49.0-jammy`, and run `npx playwright install chromium` in the image.
+
+3. Do **not** set `PLAYWRIGHT_USE_HEADLESS_SHELL=true` unless you know the image has full libraries — the app defaults to the **full Chromium** bundle on Linux for automation to avoid the slim headless-shell binary when deps are incomplete.
+
 ### Visible browser (sign-in / uploads)
 
 By default the app runs Chromium **headed** (a real window). That works on Windows and macOS, and on **Linux with a desktop** or **remote desktop**.
@@ -53,6 +69,7 @@ Alternatively use **SSH X11 forwarding** (`ssh -X`) or **VNC** so `DISPLAY` is s
 | `PLAYWRIGHT_CHROMIUM_ARGS` | Extra space-separated Chromium flags. |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Custom Chromium/Chrome binary path. |
 | `PLAYWRIGHT_CHANNEL` | e.g. `chrome` to use installed Google Chrome. |
+| `PLAYWRIGHT_USE_HEADLESS_SHELL` | Set `true` only if you need Playwright’s minimal headless shell; requires the same OS libs as Chromium. **Leave unset** on typical Linux servers so automation uses the full bundled Chromium. |
 | `TIKTOK_PROXY_TRAFFIC_LOG` | Set `1` to log **estimated** proxy egress per upload (sums `Content-Length` on responses, top hostnames, resource types, main-frame navigations, and main `goto` time). Chunked responses without length are not counted. |
 | `TIKTOK_BLOCK_NON_ESSENTIAL` | **Upload worker only.** When unset or `1`, blocks **fonts**, optional **images** (see below), known third-party trackers (Google Analytics / GTM / DoubleClick / Facebook pixel hosts), and **`beacon`** requests. Does **not** block `ttwstatic`, `effectcdn`, or music CDNs. Set `0` to disable all of this if Studio misbehaves. |
 | `TIKTOK_BLOCK_STUDIO_IMAGES` | Only used when `TIKTOK_BLOCK_NON_ESSENTIAL` is on. Default blocks most **images** except URLs that look music-related (`ies-music`, `/music`, `tiktokcdn.com` paths with music/sound/cover, etc.). Set `0` to load all images again (still blocks fonts + trackers). |

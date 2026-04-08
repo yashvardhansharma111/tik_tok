@@ -14,8 +14,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
   }
 
   await connectDB();
+  const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
   const job = await RenameJobModel.findOne({ _id: jobId }).lean();
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+
+  const jobOwnerId = String((job as { ownerId?: unknown }).ownerId ?? "");
+  if (jobOwnerId !== String(ownerId)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const j = job as {
     status: string;

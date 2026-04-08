@@ -252,6 +252,18 @@ async function runBulkRenameJob(jobId: string) {
         continue;
       }
 
+      const snap = sanitizeTikTokUsername(item.username);
+      const live = sanitizeTikTokUsername(acc.username);
+      if (snap !== live) {
+        renameLog("rename_stale_job_snapshot", {
+          message:
+            "Job item.username is the frozen ‘before’ handle from queue time; Account.username was changed since — automation uses current Account row for TikTok",
+          itemUsernameSnapshot: item.username,
+          accountUsernameNow: acc.username,
+          accountId: String(item.accountId),
+        });
+      }
+
       const proxy = buildStickyProxyForAccount(acc.username, acc.proxy, 1, String(acc._id));
       let lastError = "";
       let done = false;
@@ -309,6 +321,13 @@ async function runBulkRenameJob(jobId: string) {
             );
             done = true;
             renameLog("item_done", { appliedUsername: candidate });
+            renameLog("rename_audit_persisted", {
+              jobId: String(jobId),
+              accountId: String(item.accountId),
+              usernameBefore: item.username,
+              usernameAfter: candidate,
+              note: "RenameJob.items.username left unchanged (snapshot); Account.username updated to usernameAfter",
+            });
             break;
           }
           lastError = persist.error;
