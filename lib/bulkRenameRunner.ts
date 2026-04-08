@@ -3,7 +3,7 @@ import { connectDB } from "@/lib/db";
 import { userHasAccountAccess } from "@/lib/accountAccess";
 import { AccountModel } from "@/lib/models/Account";
 import { RenameJobModel } from "@/lib/models/RenameJob";
-import { renameTikTokUsername } from "@/automation/renameTikTokUsername";
+import { renameTikTokUsername, TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR } from "@/automation/renameTikTokUsername";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { randomUsernameSuffix, sanitizeTikTokUsername } from "@/lib/tiktokUsername";
 import { renameLog } from "@/lib/renameDebugLog";
@@ -172,13 +172,80 @@ Return a JSON array of exactly ${n} brand-new candidate usernames, position i fo
   return out;
 }
 
+/**
+ * When a candidate is taken on TikTok, ask Groq for a single creative alternative
+ * that matches the original prompt theme. Receives every previously tried name so
+ * Groq never suggests a duplicate.
+ */
+async function groqGenerateAlternativeUsername(
+  triedNames: string[],
+  prompt: string
+): Promise<string | null> {
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  if (!GROQ_API_KEY) return null;
+
+  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const forbiddenJson = JSON.stringify([...new Set(triedNames.map((s) => s.toLowerCase()))]);
+
+  const sys = `You invent ONE new TikTok username. Rules:
+- 4–24 chars, lowercase a-z, digits, underscore only. Start with a letter.
+- Output ONLY the raw username string — no quotes, no JSON, no explanation, no commentary.
+- Must NOT equal (case-insensitive) any of these already-tried handles: ${forbiddenJson}
+- Be creative: use abbreviations, wordplay, number substitutions, underscores, related words. Never just append random digits to a taken name.`;
+
+  const user = `These usernames were all unavailable on TikTok: ${forbiddenJson}
+Theme / prompt: "${prompt}"
+Invent ONE brand-new username that captures the same vibe but is unique and likely available. Output ONLY the username.`;
+
+  try {
+    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user },
+        ],
+        temperature: 1.1,
+        max_tokens: 60,
+      }),
+    });
+
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const raw = (data?.choices?.[0]?.message?.content?.trim() || "")
+      .replace(/^["'\s]+|["'\s]+$/g, "");
+    const clean = sanitizeTikTokUsername(raw);
+    const lower = clean.toLowerCase();
+    if (!clean || clean.length < 4 || triedNames.some((t) => t.toLowerCase() === lower)) {
+      renameLog("groq_alternative_rejected", { raw, clean, reason: "too short or duplicate" });
+      return null;
+    }
+    renameLog("groq_alternative_generated", { tried: triedNames, alternative: clean });
+    return clean;
+  } catch (e) {
+    renameLog("groq_alternative_error", { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
 export function scheduleBulkRenameJob(jobId: string) {
   setImmediate(() => {
     void runBulkRenameJob(jobId);
   });
 }
 
-const MAX_TIKTOK_USERNAME_ATTEMPTS = 6;
+const MAX_TIKTOK_USERNAME_ATTEMPTS = Number(process.env.RENAME_MAX_ATTEMPTS || 12);
+
+function is30DayUsernameCooldownError(msg: string | undefined): boolean {
+  if (!msg) return false;
+  if (msg === TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR) return true;
+  return /once every\s*30\s*days/i.test(msg) && /username/i.test(msg);
+}
 
 async function isHandleFreeForAccount(
   newUsername: string,
@@ -208,6 +275,25 @@ async function sleepBetweenAccountsMs(): Promise<void> {
   if (ms <= 0) return;
   renameLog("between_accounts_sleep", { ms });
   await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Job-level status from per-item outcomes (was always `done` before, which misled the UI). */
+async function finalizeRenameJobStatus(jobId: mongoose.Types.ObjectId): Promise<void> {
+  const fresh = await RenameJobModel.findById(jobId).lean();
+  if (!fresh) return;
+  const items = (fresh as { items?: Array<{ status?: string }> }).items || [];
+  let nDone = 0;
+  let nFail = 0;
+  for (const it of items) {
+    if (it.status === "done") nDone += 1;
+    else if (it.status === "failed") nFail += 1;
+  }
+  let finalStatus: "done" | "failed" | "partial";
+  if (nFail === 0) finalStatus = "done";
+  else if (nDone === 0) finalStatus = "failed";
+  else finalStatus = "partial";
+  await RenameJobModel.updateOne({ _id: jobId }, { $set: { status: finalStatus } });
+  renameLog("job_status_finalized", { jobId: String(jobId), finalStatus, nDone, nFail });
 }
 
 async function runBulkRenameJob(jobId: string) {
@@ -267,6 +353,7 @@ async function runBulkRenameJob(jobId: string) {
       const proxy = buildStickyProxyForAccount(acc.username, acc.proxy, 1, String(acc._id));
       let lastError = "";
       let done = false;
+      const triedCandidates: string[] = [];
 
       renameLog("account_loaded", {
         dbUsername: acc.username,
@@ -274,15 +361,31 @@ async function runBulkRenameJob(jobId: string) {
         hasSession: Boolean(acc.session?.length),
       });
 
+      /** Ask Groq for a fresh name that hasn't been tried yet. Falls back to random suffix. */
+      const nextCandidate = async (): Promise<string> => {
+        const allTried = [...triedCandidates, acc.username, ...names];
+        const alt = await groqGenerateAlternativeUsername(allTried, (job as any).prompt);
+        if (alt) {
+          renameLog("retry_candidate_chosen", { candidate: alt, source: "groq" });
+          return sanitizeTikTokUsername(alt);
+        }
+        const fb = sanitizeTikTokUsername(
+          `${names[idx] || item.username}_${randomUsernameSuffix()}${triedCandidates.length}`
+        );
+        renameLog("retry_candidate_chosen", { candidate: fb, source: "random_suffix" });
+        return fb;
+      };
+
       for (let attempt = 0; attempt < MAX_TIKTOK_USERNAME_ATTEMPTS; attempt++) {
         candidate = sanitizeTikTokUsername(candidate);
+        triedCandidates.push(candidate);
         renameLog("attempt", { attempt: attempt + 1, max: MAX_TIKTOK_USERNAME_ATTEMPTS, candidate });
 
         const free = await isHandleFreeForAccount(candidate, item.accountId);
         if (!free.ok) {
           lastError = free.reason;
           renameLog("candidate_not_free_in_app_db", { reason: free.reason, candidate });
-          candidate = sanitizeTikTokUsername(`${item.username}_${randomUsernameSuffix()}${attempt}`);
+          candidate = await nextCandidate();
           continue;
         }
 
@@ -299,6 +402,22 @@ async function runBulkRenameJob(jobId: string) {
           verified: r.verified,
           error: r.error,
         });
+
+        if (is30DayUsernameCooldownError(r.error)) {
+          lastError = r.error || TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR;
+          renameLog("rename_blocked_30_day_cooldown", {
+            accountId: String(item.accountId),
+            oldUsernameLive: acc.username,
+            oldUsernameJobSnapshot: item.username,
+            attemptedNewUsername: candidate,
+            message:
+              "TikTok blocks username changes within ~30 days — not retrying other candidate names for this account",
+          });
+          console.warn(
+            `[rename] Name NOT changed — accountId=${String(item.accountId)} OLD @${acc.username} | tried NEW @${candidate} | ${lastError}`
+          );
+          break;
+        }
 
         if (r.ok && r.verified) {
           const persist = await saveAccountUsername(item.accountId, candidate);
@@ -328,6 +447,9 @@ async function runBulkRenameJob(jobId: string) {
               usernameAfter: candidate,
               note: "RenameJob.items.username left unchanged (snapshot); Account.username updated to usernameAfter",
             });
+            console.info(
+              `[rename] Name saved — accountId=${String(item.accountId)} OLD @${acc.username} → NEW @${candidate} (MongoDB Account.username updated)`
+            );
             break;
           }
           lastError = persist.error;
@@ -335,12 +457,24 @@ async function runBulkRenameJob(jobId: string) {
         }
 
         lastError = r.error || "TikTok UI did not respond after save";
-        if (lastError === "Username not available") {
-          renameLog("retry_new_candidate_taken", { previous: candidate });
-          candidate = sanitizeTikTokUsername(`${names[idx] || item.username}_${randomUsernameSuffix()}${attempt + 1}`);
+
+        const shouldRetry =
+          lastError === "Username not available" ||
+          (typeof lastError === "string" && lastError.startsWith("Verification failed")) ||
+          lastError === "TikTok UI did not respond after save";
+
+        if (shouldRetry) {
+          renameLog("retry_new_candidate", { previous: candidate, reason: lastError, attemptsDone: attempt + 1 });
+          const betweenAttemptMs = Number(process.env.RENAME_BETWEEN_ATTEMPT_MS || 2500);
+          if (betweenAttemptMs > 0) {
+            renameLog("between_attempt_sleep", { ms: betweenAttemptMs });
+            await new Promise((r) => setTimeout(r, betweenAttemptMs));
+          }
+          candidate = await nextCandidate();
           continue;
         }
-        renameLog("abort_attempts_not_taken", { lastError });
+
+        renameLog("abort_attempts_not_retryable", { lastError });
         break;
       }
 
@@ -355,7 +489,7 @@ async function runBulkRenameJob(jobId: string) {
       await RenameJobModel.updateOne({ _id: jobId }, { $inc: { completed: 1 } });
     }
 
-    await RenameJobModel.updateOne({ _id: jobId }, { $set: { status: "done" } });
+    await finalizeRenameJobStatus(new mongoose.Types.ObjectId(jobId));
     renameLog("job_complete", { jobId: String(jobId) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

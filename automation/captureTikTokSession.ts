@@ -1,4 +1,6 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
+import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
+import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -42,8 +44,10 @@ export async function captureTikTokStorageState(proxy?: string): Promise<string>
       userAgent: UA,
       ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
     });
+    await installSafeBandwidthRoutes(context);
     const page = await context.newPage();
     await page.goto("https://www.tiktok.com/login", { waitUntil: "domcontentloaded", timeout: 90_000 });
+    await dismissTikTokPopups(page);
 
     await page.waitForURL(
       (url) => {
@@ -57,6 +61,7 @@ export async function captureTikTokStorageState(proxy?: string): Promise<string>
     );
 
     await page.waitForTimeout(2500);
+    await dismissTikTokPopups(page);
     const state = await context.storageState();
     return JSON.stringify(state);
   } finally {

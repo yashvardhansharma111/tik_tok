@@ -357,7 +357,7 @@ export default function RenamePage() {
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               Each row shows the handle when the job started → target or final @ after TikTok (and our DB).
             </p>
-            <ul className="mt-3 divide-y divide-zinc-100 dark:divide-zinc-800">
+            <ul className="mt-3">
               {renameProgress.items.map((it) => {
                 const before = it.username ? `@${it.username.replace(/^@/, "")}` : "—";
                 const afterRaw = (it.appliedUsername || it.proposedName || "").replace(/^@/, "");
@@ -365,17 +365,17 @@ export default function RenamePage() {
                 const done = it.status === "done";
                 const failed = it.status === "failed";
                 return (
-                  <li key={it.accountId} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 flex-1 font-mono text-sm">
-                      <span className="text-zinc-500 dark:text-zinc-400">{before}</span>
-                      <span className="mx-2 text-violet-600 dark:text-violet-400">→</span>
-                      <span className={done ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-zinc-800 dark:text-zinc-200"}>
-                        {after}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                  <li key={it.accountId} className="flex flex-col gap-2 border-b border-zinc-100 py-3 last:border-b-0 dark:border-zinc-800">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 font-mono text-sm">
+                        <span className="text-zinc-500 dark:text-zinc-400">{before}</span>
+                        <span className="mx-2 text-violet-600 dark:text-violet-400">→</span>
+                        <span className={done ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-zinc-800 dark:text-zinc-200"}>
+                          {after}
+                        </span>
+                      </div>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[0.65rem] font-bold uppercase ${
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-bold uppercase ${
                           done
                             ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
                             : failed
@@ -389,7 +389,9 @@ export default function RenamePage() {
                       </span>
                     </div>
                     {failed && it.error && (
-                      <p className="basis-full text-xs text-red-600 dark:text-red-400">{it.error}</p>
+                      <p className="min-w-0 max-w-full whitespace-pre-wrap break-words text-xs text-red-600 dark:text-red-400">
+                        {it.error}
+                      </p>
                     )}
                   </li>
                 );
@@ -398,11 +400,16 @@ export default function RenamePage() {
           </div>
         )}
 
-        {renameProgress?.complete && (
-          <p className="mt-4 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-            Rename job finished. Account list above was refreshed; open Accounts anytime to confirm.
-          </p>
-        )}
+        {renameProgress?.complete &&
+          (renameProgress.items.some((it) => it.status === "failed") ? (
+            <p className="mt-4 text-sm font-medium text-amber-800 dark:text-amber-200">
+              Rename job finished with one or more failures. Check the rows above and history; you can run again with a different theme or after cooldowns clear.
+            </p>
+          ) : (
+            <p className="mt-4 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+              Rename job finished. Account list above was refreshed; open Accounts anytime to confirm.
+            </p>
+          ))}
       </section>
 
       <section className="mt-12 rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-6 shadow-md dark:border-zinc-800">
@@ -448,9 +455,11 @@ export default function RenamePage() {
                               ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
                               : job.status === "failed"
                                 ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
-                                : job.status === "running"
+                                : job.status === "partial"
                                   ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
-                                  : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+                                  : job.status === "running"
+                                    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+                                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
                           }`}
                         >
                           {job.status}
@@ -472,33 +481,40 @@ export default function RenamePage() {
                             const done = it.status === "done";
                             const failed = it.status === "failed";
                             return (
-                              <li key={`${job.id}-${it.accountId}`} className="flex flex-col gap-1 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="min-w-0 flex-1 font-mono text-sm">
-                                  <span className="text-zinc-500 dark:text-zinc-400">{before}</span>
-                                  <span className="mx-2 text-violet-600 dark:text-violet-400">→</span>
+                              <li
+                                key={`${job.id}-${it.accountId}`}
+                                className="flex flex-col gap-2 border-b border-zinc-100 py-2.5 last:border-b-0 dark:border-zinc-800"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1 font-mono text-sm">
+                                    <span className="text-zinc-500 dark:text-zinc-400">{before}</span>
+                                    <span className="mx-2 text-violet-600 dark:text-violet-400">→</span>
+                                    <span
+                                      className={
+                                        done
+                                          ? "font-semibold text-emerald-700 dark:text-emerald-300"
+                                          : "text-zinc-800 dark:text-zinc-200"
+                                      }
+                                    >
+                                      {after}
+                                    </span>
+                                  </div>
                                   <span
-                                    className={
+                                    className={`shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-bold uppercase ${
                                       done
-                                        ? "font-semibold text-emerald-700 dark:text-emerald-300"
-                                        : "text-zinc-800 dark:text-zinc-200"
-                                    }
+                                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
+                                        : failed
+                                          ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+                                          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                                    }`}
                                   >
-                                    {after}
+                                    {it.status}
                                   </span>
                                 </div>
-                                <span
-                                  className={`shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-bold uppercase ${
-                                    done
-                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
-                                      : failed
-                                        ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
-                                        : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                                  }`}
-                                >
-                                  {it.status}
-                                </span>
                                 {failed && it.error && (
-                                  <p className="basis-full text-xs text-red-600 dark:text-red-400">{it.error}</p>
+                                  <p className="min-w-0 max-w-full whitespace-pre-wrap break-words text-xs text-red-600 dark:text-red-400">
+                                    {it.error}
+                                  </p>
                                 )}
                               </li>
                             );

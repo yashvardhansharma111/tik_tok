@@ -1,4 +1,6 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
+import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
+import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -28,12 +30,14 @@ export async function renameTikTokDisplayName(opts: {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       ...(opts.proxy?.server ? { proxy: opts.proxy } : {}),
     });
+    await installSafeBandwidthRoutes(context);
     const page = await context.newPage();
 
     await page.goto("https://www.tiktok.com/setting", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
+    await dismissTikTokPopups(page);
 
     const name = opts.newDisplayName.trim().slice(0, 30);
     if (!name) return { ok: false, error: "Empty display name" };

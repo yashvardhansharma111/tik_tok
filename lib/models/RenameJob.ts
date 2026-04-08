@@ -23,7 +23,12 @@ const RenameJobSchema = new Schema(
   {
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     prompt: { type: String, required: true },
-    status: { type: String, enum: ["queued", "running", "done", "failed"], default: "queued", index: true },
+    status: {
+      type: String,
+      enum: ["queued", "running", "done", "failed", "partial"],
+      default: "queued",
+      index: true,
+    },
     total: { type: Number, default: 0 },
     completed: { type: Number, default: 0 },
     items: { type: [ItemSchema], default: [] },

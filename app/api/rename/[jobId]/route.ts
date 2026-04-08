@@ -62,6 +62,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
       status: it.status,
       error: it.error,
     })),
-    complete: j.status === "done" || j.status === "failed",
+    complete: j.status === "done" || j.status === "failed" || j.status === "partial",
   });
 }

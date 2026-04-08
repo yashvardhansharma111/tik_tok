@@ -1,5 +1,6 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
 import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
+import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
 import {
   discardUploadContext,
   makeUploadContextPoolKey,
@@ -2921,6 +2922,7 @@ export async function runUploadWithSession(
         });
       }
 
+      await dismissTikTokPopups(page);
       ctx.flow("human: pause + scroll after load");
       await humanPause(page);
       await humanScroll(page);
