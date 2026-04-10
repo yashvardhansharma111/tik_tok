@@ -505,36 +505,49 @@ async function verifyNewUsernameOnTikTok(
   };
 }
 
+type RenameMultiResult = RenameUsernameResult & {
+  /** Which candidate actually succeeded (so the runner knows which name was applied). */
+  appliedCandidate?: string;
+  /** Names that were tried and confirmed unavailable on TikTok (Save disabled / TikTok rejected). */
+  triedUnavailable: string[];
+};
+
 /**
- * Profile → Edit profile → Username → Save (TikTok web).
- * Logs heavily; uses slow pauses (RENAME_PAUSE_MIN_MS / RENAME_PAUSE_MAX_MS).
- * Success only after verification navigation — never "silent success".
+ * Profile → Edit profile → try candidates in-session → Save (TikTok web).
+ *
+ * Accepts multiple candidate usernames. For each one it types the name, waits for
+ * TikTok's inline availability check, and only clicks Save when TikTok enables it.
+ * If a name is unavailable it tries the next candidate **without closing the browser**.
  */
 export async function renameTikTokUsername(opts: {
   sessionJson: string;
   currentUsername: string;
+  /** Primary target name. */
   newUsername: string;
+  /** Extra fallback candidates to try in the SAME browser session if the primary is taken. */
+  fallbackCandidates?: string[];
   proxy?: PlaywrightProxyConfig;
-}): Promise<RenameUsernameResult> {
+}): Promise<RenameMultiResult> {
   const handle = opts.currentUsername.replace(/^@/, "").trim();
-  const next = opts.newUsername.replace(/^@/, "").trim().toLowerCase();
+  const allCandidates = [
+    opts.newUsername,
+    ...(opts.fallbackCandidates || []),
+  ]
+    .map((s) => s.replace(/^@/, "").trim().toLowerCase())
+    .filter((s) => s.length >= 2 && s !== handle.toLowerCase());
+
+  const triedUnavailable: string[] = [];
+
+  if (allCandidates.length === 0) {
+    renameLog("abort_no_valid_candidates", { handle });
+    return { ...fail("No valid candidate usernames"), triedUnavailable };
+  }
 
   renameLog("job_start", {
     currentUsernameFromDb: handle,
-    targetNewUsername: next,
+    candidates: allCandidates,
     proxyServer: opts.proxy?.server ? "(set)" : "(none)",
   });
-  console.info(`[rename] OLD @${handle} → target NEW @${next} (TikTok profile → edit username)`);
-
-  if (!next || next.length < 2) {
-    renameLog("abort_invalid_target", { next });
-    return fail("TikTok UI did not respond after save");
-  }
-
-  if (next === handle.toLowerCase()) {
-    renameLog("abort_same_as_current", { handle, next });
-    return fail("TikTok UI did not respond after save");
-  }
 
   const tmpFile = path.join(
     os.tmpdir(),
@@ -562,14 +575,14 @@ export async function renameTikTokUsername(opts: {
     await dismissTikTokPopups(page);
 
     const urlAfterNav = parseTikTokHandleFromUrl(page.url());
-    if (urlAfterNav === next) {
+    const firstCandidate = allCandidates[0];
+    if (urlAfterNav === firstCandidate) {
       renameLog("tiktok_url_already_shows_target_handle", {
-        target: next,
+        target: firstCandidate,
         url: page.url(),
         dbHandle: handle,
-        note: "TikTok already on desired @handle (e.g. prior attempt succeeded on TikTok); skip edit flow",
       });
-      return { ok: true, verified: true };
+      return { ok: true, verified: true, appliedCandidate: firstCandidate, triedUnavailable };
     }
 
     await renameSlowPause(page, "after_initial_goto");
@@ -581,7 +594,7 @@ export async function renameTikTokUsername(opts: {
     if (!editProfile) {
       await maybeScreenshot(page, "02-no-edit-profile");
       renameLog("fail_edit_profile_missing", { url: page.url() });
-      return fail("Edit profile not found (not logged into this account)");
+      return { ...fail("Edit profile not found (not logged into this account)"), triedUnavailable };
     }
 
     renameLog("click_edit_profile");
@@ -627,162 +640,202 @@ export async function renameTikTokUsername(opts: {
 
     if (!input) {
       await maybeScreenshot(page, "04-no-username-input");
-      return fail("TikTok UI did not respond after save");
+      return { ...fail("Username input not found"), triedUnavailable };
     }
 
     const valueBefore = (await input.inputValue().catch(() => "")) || "(empty)";
-    renameLog("username_field_before_fill", { valueBefore, willType: next });
+    renameLog("username_field_before_fill", { valueBefore });
 
-    await input.click({ force: true });
-    await renameSlowPause(page, "after_input_focus");
-    await input.fill("");
-    await renameSlowPause(page, "after_clear");
+    // ---------- Find Save button once (it stays in the form) ----------
+    const saveBtnCandidates = [
+      page.getByRole("button", { name: /^save$/i }).first(),
+      page.locator('button:has-text("Save")').first(),
+      page.locator('[data-e2e*="save" i] button, [data-e2e*="save" i]').first(),
+      page.locator('button[type="submit"]').first(),
+    ];
+    let saveBtn: import("playwright").Locator | null = null;
+    for (const loc of saveBtnCandidates) {
+      if (await loc.isVisible({ timeout: 3000 }).catch(() => false)) {
+        saveBtn = loc;
+        renameLog("save_button_found", { selector: loc.toString() });
+        break;
+      }
+    }
+    if (!saveBtn) {
+      await maybeScreenshot(page, "05-no-save-button");
+      renameLog("save_button_not_found_anywhere");
+      return { ...fail("Save button not found"), triedUnavailable };
+    }
 
+    // ---------- In-session candidate loop ----------
+    // Strategy: type name → wait 2s → click Save → check TikTok's response
+    //   confirm popup → click confirm → verify → success
+    //   taken/error popup → dismiss → try next name
+    //   cooldown → abort
     const charDelay = Number(process.env.RENAME_USERNAME_CHAR_DELAY_MS || 120);
-    for (const ch of next) {
-      await input.type(ch, { delay: charDelay });
-    }
-    renameLog("username_field_after_type", { typed: next });
+    const afterTypeWaitMs = Number(process.env.RENAME_AFTER_TYPE_WAIT_MS || 2000);
 
-    const valueAfterType = (await input.inputValue().catch(() => "")) || "";
-    renameLog("username_input_value_check", { valueAfterType, matchesTarget: valueAfterType.toLowerCase() === next });
+    for (const next of allCandidates) {
+      renameLog("in_session_try_candidate", { candidate: next });
+      console.info(`[rename] OLD @${handle} → trying @${next}`);
 
-    await renameSlowPause(page, "before_save_click");
-    await maybeScreenshot(page, "05-filled-username");
+      // Clear and type the candidate
+      await input.click({ force: true });
+      await input.fill("");
+      await page.waitForTimeout(300).catch(() => {});
 
-    const saveBtn = page.getByRole("button", { name: /^save$/i }).first();
-    if (!(await saveBtn.isVisible({ timeout: 12_000 }).catch(() => false))) {
-      await maybeScreenshot(page, "06-no-save-button");
-      return fail("Save button not visible");
-    }
-
-    renameLog("click_save");
-    await saveBtn.click({ force: true });
-    const afterSaveMs = Number(process.env.RENAME_AFTER_SAVE_TO_MODAL_MS || 800);
-    await page.waitForTimeout(afterSaveMs).catch(() => {});
-    renameLog("after_save_short_wait_before_modal", { ms: afterSaveMs });
-
-    const issueEarly = await detectUsernameTakenOrError(page);
-    if (issueEarly === "cooldown") {
-      renameLog("result_30_day_cooldown_after_save", { oldHandle: handle, attemptedNew: next });
-      console.warn(
-        `[rename] BLOCKED 30-day cooldown — OLD @${handle} unchanged; TikTok rejected NEW @${next} (change limit)`
-      );
-      return fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR);
-    }
-    if (issueEarly === "taken") {
-      renameLog("result_taken_early");
-      return fail("Username not available");
-    }
-    if (issueEarly === "error") {
-      renameLog("result_invalid_early");
-      return fail("TikTok UI did not respond after save");
-    }
-
-    const confirmed = await confirmSetUsernameDialogIfPresent(page);
-    await maybeScreenshot(page, "07-after-save-and-confirm");
-
-    const issue = await detectUsernameTakenOrError(page);
-    if (issue === "cooldown") {
-      renameLog("result_30_day_cooldown_after_confirm_modal", { oldHandle: handle, attemptedNew: next });
-      console.warn(
-        `[rename] BLOCKED 30-day cooldown — OLD @${handle} unchanged; TikTok rejected NEW @${next} (change limit)`
-      );
-      return fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR);
-    }
-    if (issue === "taken") {
-      renameLog("result_taken");
-      return fail("Username not available");
-    }
-    if (issue === "error") {
-      renameLog("result_invalid");
-      return fail("TikTok UI did not respond after save");
-    }
-
-    await renameSlowPause(page, "before_second_error_scan");
-    const issue2 = await detectUsernameTakenOrError(page);
-    if (issue2 === "cooldown") {
-      renameLog("result_30_day_cooldown_second_scan", { oldHandle: handle, attemptedNew: next });
-      console.warn(
-        `[rename] BLOCKED 30-day cooldown — OLD @${handle} unchanged; TikTok rejected NEW @${next} (change limit)`
-      );
-      return fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR);
-    }
-    if (issue2 === "taken") {
-      renameLog("result_taken_second_scan");
-      return fail("Username not available");
-    }
-    if (issue2 === "error") {
-      return fail("TikTok UI did not respond after save");
-    }
-
-    if (!confirmed) {
-      renameLog("set_username_confirm_modal_absent_probe");
-      await page.waitForTimeout(2500);
-      const lateIssue = await detectUsernameTakenOrError(page);
-      if (lateIssue === "cooldown") {
-        renameLog("result_30_day_cooldown_after_modal_absent", { oldHandle: handle, attemptedNew: next });
-        console.warn(
-          `[rename] BLOCKED 30-day cooldown — OLD @${handle} unchanged; TikTok rejected NEW @${next} (change limit)`
-        );
-        return fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR);
+      for (const ch of next) {
+        await input.type(ch, { delay: charDelay });
       }
-      if (lateIssue === "taken") {
-        renameLog("result_taken_after_modal_absent");
-        return fail("Username not available");
+      renameLog("username_field_after_type", { typed: next });
+
+      const valueAfterType = (await input.inputValue().catch(() => "")) || "";
+      renameLog("username_input_value_check", { valueAfterType, matchesTarget: valueAfterType.toLowerCase() === next });
+
+      // Wait briefly then click Save regardless of TikTok's availability check
+      await page.waitForTimeout(afterTypeWaitMs).catch(() => {});
+
+      // Re-find Save button each iteration (TikTok may re-render the form)
+      let currentSaveBtn: import("playwright").Locator | null = null;
+      for (const loc of saveBtnCandidates) {
+        if (await loc.isVisible({ timeout: 2000 }).catch(() => false)) {
+          currentSaveBtn = loc;
+          break;
+        }
       }
-      if (lateIssue === "error") {
-        return fail("TikTok UI did not respond after save");
+      if (!currentSaveBtn) {
+        renameLog("in_session_save_not_found", { candidate: next });
+        triedUnavailable.push(next);
+        continue;
       }
 
-      const verificationNoModal = await verifyNewUsernameOnTikTok(page, next, {
-        confirmModalWasClicked: false,
-      });
-      if (verificationNoModal.ok) {
-        renameLog("SUCCESS_verified_without_confirm_modal", {
-          detail: verificationNoModal.detail,
-          targetUsername: next,
-          oldUsername: handle,
+      renameLog("click_save", { candidate: next });
+      try {
+        await currentSaveBtn.click({ force: true, timeout: 5000 });
+      } catch {
+        // Save click timed out — TikTok likely disabled it (name taken)
+        renameLog("in_session_save_click_timeout", { candidate: next });
+        triedUnavailable.push(next);
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(500).catch(() => {});
+        continue;
+      }
+
+      const afterSaveMs = Number(process.env.RENAME_AFTER_SAVE_TO_MODAL_MS || 800);
+      await page.waitForTimeout(afterSaveMs).catch(() => {});
+      renameLog("after_save_wait", { ms: afterSaveMs });
+
+      // --- Check what TikTok shows after Save ---
+      const issueAfterSave = await detectUsernameTakenOrError(page);
+      if (issueAfterSave === "cooldown") {
+        renameLog("result_30_day_cooldown_after_save", { oldHandle: handle, attemptedNew: next });
+        console.warn(`[rename] BLOCKED 30-day cooldown — OLD @${handle} unchanged`);
+        return { ...fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR), triedUnavailable };
+      }
+      if (issueAfterSave === "taken") {
+        renameLog("in_session_taken_after_save", { candidate: next });
+        triedUnavailable.push(next);
+        // Dismiss any error dialog/toast and try next candidate
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(500).catch(() => {});
+        continue;
+      }
+      if (issueAfterSave === "error") {
+        renameLog("in_session_error_after_save", { candidate: next });
+        triedUnavailable.push(next);
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(500).catch(() => {});
+        continue;
+      }
+
+      // No error → check for confirm popup ("Set your username?")
+      const confirmed = await confirmSetUsernameDialogIfPresent(page);
+      await maybeScreenshot(page, "07-after-save-and-confirm");
+
+      // Check again after confirm attempt
+      const issueAfterConfirm = await detectUsernameTakenOrError(page);
+      if (issueAfterConfirm === "cooldown") {
+        return { ...fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR), triedUnavailable };
+      }
+      if (issueAfterConfirm === "taken") {
+        renameLog("in_session_taken_after_confirm", { candidate: next });
+        triedUnavailable.push(next);
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(500).catch(() => {});
+        continue;
+      }
+
+      if (!confirmed) {
+        // No confirm modal appeared — wait a bit more, check for late errors
+        renameLog("set_username_confirm_modal_absent_probe");
+        await page.waitForTimeout(2500);
+        const lateIssue = await detectUsernameTakenOrError(page);
+        if (lateIssue === "cooldown") {
+          return { ...fail(TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR), triedUnavailable };
+        }
+        if (lateIssue === "taken") {
+          triedUnavailable.push(next);
+          await page.keyboard.press("Escape").catch(() => {});
+          await page.waitForTimeout(500).catch(() => {});
+          continue;
+        }
+        if (lateIssue === "error") {
+          triedUnavailable.push(next);
+          await page.keyboard.press("Escape").catch(() => {});
+          await page.waitForTimeout(500).catch(() => {});
+          continue;
+        }
+
+        // No errors, no confirm — try to verify
+        const verificationNoModal = await verifyNewUsernameOnTikTok(page, next, {
+          confirmModalWasClicked: false,
         });
-        console.info(`[rename] SUCCESS — OLD @${handle} → NEW @${next} (verified; no confirm modal)`);
-        return { ok: true, verified: true };
+        if (verificationNoModal.ok) {
+          renameLog("SUCCESS_verified_without_confirm_modal", {
+            detail: verificationNoModal.detail,
+            targetUsername: next,
+            oldUsername: handle,
+          });
+          console.info(`[rename] SUCCESS — OLD @${handle} → NEW @${next} (verified; no confirm modal)`);
+          return { ok: true, verified: true, appliedCandidate: next, triedUnavailable };
+        }
+        if (/does not exist|unavailable/i.test(verificationNoModal.detail)) {
+          triedUnavailable.push(next);
+          continue;
+        }
+        return { ...fail("TikTok UI did not respond after save"), triedUnavailable };
       }
 
-      const late2 = await detectUsernameTakenOrError(page);
-      if (late2 === "taken") {
-        return fail("Username not available");
+      // Confirm was clicked — verify the rename
+      renameLog("no_error_modal_proceed_verify", { url: page.url() });
+      const verification = await verifyNewUsernameOnTikTok(page, next, { confirmModalWasClicked: true });
+
+      if (!verification.ok) {
+        renameLog("FAIL_not_verified", { detail: verification.detail });
+        await maybeScreenshot(page, "08-verify-failed");
+        return { ...fail("Verification failed: username not updated on profile"), triedUnavailable };
       }
-      if (/does not exist|unavailable|belongs to another user/i.test(verificationNoModal.detail)) {
-        renameLog("result_taken_inferred_from_verify", { detail: verificationNoModal.detail });
-        return fail("Username not available");
-      }
-      return fail("TikTok UI did not respond after save");
+
+      renameLog("SUCCESS_verified", {
+        detail: verification.detail,
+        targetUsername: next,
+        oldUsername: handle,
+        message: `TikTok username applied: OLD @${handle} → NEW @${next}`,
+      });
+      console.info(`[rename] SUCCESS — OLD @${handle} → NEW @${next} (verified on TikTok; update app DB next)`);
+      return { ok: true, verified: true, appliedCandidate: next, triedUnavailable };
     }
 
-    renameLog("no_error_modal_proceed_verify", { url: page.url() });
-    const verification = await verifyNewUsernameOnTikTok(page, next, { confirmModalWasClicked: true });
-
-    if (!verification.ok) {
-      renameLog("FAIL_not_verified", { detail: verification.detail });
-      await maybeScreenshot(page, "08-verify-failed");
-      return fail("Verification failed: username not updated on profile");
-    }
-
-    renameLog("SUCCESS_verified", {
-      detail: verification.detail,
-      targetUsername: next,
-      oldUsername: handle,
-      message: `TikTok username applied: OLD @${handle} → NEW @${next}`,
-    });
-    console.info(`[rename] SUCCESS — OLD @${handle} → NEW @${next} (verified on TikTok; update app DB next)`);
-    return { ok: true, verified: true };
+    // All candidates exhausted
+    renameLog("all_candidates_unavailable", { tried: triedUnavailable });
+    return { ...fail("Username not available"), triedUnavailable };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     renameLog("exception", { message: msg });
     if (/timeout/i.test(msg)) {
-      return fail("Page load timeout");
+      return { ...fail("Page load timeout"), triedUnavailable };
     }
-    return fail("TikTok UI did not respond after save");
+    return { ...fail("TikTok UI did not respond after save"), triedUnavailable };
   } finally {
     await browser.close().catch(() => {});
     renameLog("browser_closed");

@@ -10,24 +10,25 @@ import { renameLog } from "@/lib/renameDebugLog";
 import mongoose from "mongoose";
 
 function extractExampleUsernamesFromPrompt(prompt: string): string[] {
-  const raw = (prompt || "")
-    .split(/\r?\n/)
+  const tokens = (prompt || "")
+    .split(/[\r\n,;|]+/)
+    .flatMap((chunk) => chunk.trim().split(/\s+/))
     .map((s) => s.trim())
     .filter(Boolean);
 
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const line of raw) {
-    const token = line
+  for (const raw of tokens) {
+    const token = raw
       .replace(/^@/, "")
-      .replace(/[^a-zA-Z0-9_]/g, "")
+      .replace(/[^a-zA-Z0-9_.]/g, "")
       .trim();
     const s = sanitizeTikTokUsername(token);
     if (!s || s.length < 4) continue;
     if (seen.has(s)) continue;
     seen.add(s);
     out.push(s);
-    if (out.length >= 50) break;
+    if (out.length >= 200) break;
   }
   return out;
 }
@@ -78,14 +79,56 @@ function forceDistinctFromCurrentHandles(names: string[], currentHandles: string
   });
 }
 
+/**
+ * Build candidate list from prompt examples. When there are enough examples (>= n)
+ * we use them directly. When fewer, cycle through the examples appending numeric
+ * suffixes. Strips trailing digits first to avoid `letofanpage12` from `letofanpage1`.
+ *
+ * 5 examples → 40 accounts:
+ *   jaredletoarchive, official30secondmars, letofanpage1, 30secondtomarsdaily2, jaredletomars1
+ *   jaredletoarchive02, official30secondmars02, letofanpage02, 30secondtomarsdaily02, jaredletomars02
+ *   jaredletoarchive03, official30secondmars03, letofanpage03, ...
+ */
+function buildCandidatesFromExamples(examples: string[], n: number): string[] {
+  if (examples.length === 0) return [];
+
+  const bases = examples.map((ex) => {
+    const s = sanitizeTikTokUsername(ex);
+    return s.replace(/\d+$/, "");
+  });
+
+  const out: string[] = [];
+  let round = 0;
+  while (out.length < n) {
+    for (let i = 0; i < examples.length; i++) {
+      if (out.length >= n) break;
+      if (round === 0) {
+        out.push(sanitizeTikTokUsername(examples[i]));
+      } else {
+        const num = String(round + 1).padStart(2, "0");
+        out.push(sanitizeTikTokUsername(bases[i].slice(0, 22) + num));
+      }
+    }
+    round += 1;
+    if (round > 100) break;
+  }
+  return out.slice(0, n);
+}
+
 async function groqGenerateTikTokUsernames(prompt: string, labels: string[]): Promise<string[]> {
   const n = labels.length;
 
   const promptExamples = extractExampleUsernamesFromPrompt(prompt);
-  if (promptExamples.length >= n) {
-    renameLog("prompt_examples_used", { count: promptExamples.length, using: n, examples: promptExamples.slice(0, n) });
-    const raw = promptExamples.slice(0, n).map((s) => sanitizeTikTokUsername(s));
-    const distinct = forceDistinctFromCurrentHandles(raw, labels);
+
+  if (promptExamples.length > 0) {
+    const cycled = buildCandidatesFromExamples(promptExamples, n);
+    renameLog("prompt_examples_used", {
+      count: promptExamples.length,
+      using: n,
+      examples: promptExamples,
+      cycled,
+    });
+    const distinct = forceDistinctFromCurrentHandles(cycled, labels);
     return uniquifyUsernames(distinct);
   }
 
@@ -102,13 +145,10 @@ Hard rules:
 - All ${n} strings must be unique (case-insensitive).
 - CRITICAL: Do NOT output any string that equals (case-insensitive) any of these FORBIDDEN handles: ${forbiddenList}
   Those are the accounts' CURRENT @names. Repeating them would mean "no change" — always invent DIFFERENT handles.
-- Follow the user's THEME (bands, aesthetics, jokes) but create new words — e.g. theme "Jared Leto" → new handles like "marsfan_vibes", "thirtysecfan", NOT the same as any forbidden handle above.
-- If the user supplied example handles, use them as STYLE anchors (same vibe/pattern), but do not copy them exactly unless they are explicitly intended outputs.`;
+- Follow the user's THEME (bands, aesthetics, jokes) but create new words — e.g. theme "Jared Leto" → new handles like "marsfan_vibes", "thirtysecfan", NOT the same as any forbidden handle above.`;
 
-  const user = `THEME / style instructions (this is what the new names should feel like — examples in the theme are inspiration only, not strings to copy):
+  const user = `THEME / style instructions:
 ${prompt}
-
-EXAMPLE handles (STYLE ONLY): ${JSON.stringify(promptExamples.slice(0, 12))}
 
 FORBIDDEN outputs (current login handles — never put these in your JSON): ${JSON.stringify(labels)}
 
@@ -173,29 +213,54 @@ Return a JSON array of exactly ${n} brand-new candidate usernames, position i fo
 }
 
 /**
- * When a candidate is taken on TikTok, ask Groq for a single creative alternative
- * that matches the original prompt theme. Receives every previously tried name so
- * Groq never suggests a duplicate.
+ * When a candidate is taken on TikTok, generate a variant by appending a numeric
+ * suffix to the last tried name (same style the user asked for). Falls back to
+ * Groq only when prompt-style variants are exhausted.
  */
 async function groqGenerateAlternativeUsername(
   triedNames: string[],
   prompt: string
 ): Promise<string | null> {
+  const triedLower = new Set(triedNames.map((s) => s.toLowerCase()));
+  const promptExamples = extractExampleUsernamesFromPrompt(prompt);
+  const lastTried = triedNames[triedNames.length - 1] || "";
+
+  const bases = [
+    lastTried.replace(/\d+$/, ""),
+    ...promptExamples,
+  ].filter(Boolean);
+
+  for (const base of bases) {
+    for (let suf = 1; suf <= 99; suf++) {
+      const candidate = sanitizeTikTokUsername(
+        base.slice(0, 22) + (suf < 10 ? `0${suf}` : String(suf))
+      );
+      if (!triedLower.has(candidate.toLowerCase()) && candidate.length >= 4) {
+        renameLog("alternative_from_suffix", { base, candidate });
+        return candidate;
+      }
+    }
+  }
+
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) return null;
 
   const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-  const forbiddenJson = JSON.stringify([...new Set(triedNames.map((s) => s.toLowerCase()))]);
+  const forbiddenJson = JSON.stringify([...triedLower]);
+
+  const examplesHint = promptExamples.length > 0
+    ? `\nThe user wants names exactly like these examples: ${JSON.stringify(promptExamples.slice(0, 8))}. Keep the same vibe and structure — add numbers, swap words, use abbreviations of these patterns.`
+    : "";
 
   const sys = `You invent ONE new TikTok username. Rules:
 - 4–24 chars, lowercase a-z, digits, underscore only. Start with a letter.
 - Output ONLY the raw username string — no quotes, no JSON, no explanation, no commentary.
-- Must NOT equal (case-insensitive) any of these already-tried handles: ${forbiddenJson}
-- Be creative: use abbreviations, wordplay, number substitutions, underscores, related words. Never just append random digits to a taken name.`;
+- Must NOT equal (case-insensitive) any of these already-tried handles: ${forbiddenJson}${examplesHint}
+- Stay very close to the style/words of the original names. Do NOT invent completely different themes.`;
 
   const user = `These usernames were all unavailable on TikTok: ${forbiddenJson}
 Theme / prompt: "${prompt}"
-Invent ONE brand-new username that captures the same vibe but is unique and likely available. Output ONLY the username.`;
+Invent ONE brand-new username that is a slight variation (number swap, abbreviation, suffix) of the same style. Output ONLY the username.`;
 
   try {
     const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -210,7 +275,7 @@ Invent ONE brand-new username that captures the same vibe but is unique and like
           { role: "system", content: sys },
           { role: "user", content: user },
         ],
-        temperature: 1.1,
+        temperature: 0.7,
         max_tokens: 60,
       }),
     });
@@ -221,7 +286,7 @@ Invent ONE brand-new username that captures the same vibe but is unique and like
       .replace(/^["'\s]+|["'\s]+$/g, "");
     const clean = sanitizeTikTokUsername(raw);
     const lower = clean.toLowerCase();
-    if (!clean || clean.length < 4 || triedNames.some((t) => t.toLowerCase() === lower)) {
+    if (!clean || clean.length < 4 || triedLower.has(lower)) {
       renameLog("groq_alternative_rejected", { raw, clean, reason: "too short or duplicate" });
       return null;
     }
@@ -308,6 +373,8 @@ async function runBulkRenameJob(jobId: string) {
     const labels = (job as any).items.map((i: any) => i.username);
     renameLog("groq_request", { labels, prompt: (job as any).prompt });
     const names = await groqGenerateTikTokUsernames((job as any).prompt, labels);
+    /** New @handles successfully applied earlier in this same job — tell Groq alternatives to avoid them. */
+    const appliedUsernamesThisJob: string[] = [];
 
     for (let idx = 0; idx < (job as any).items.length; idx++) {
       if (idx > 0) await sleepBetweenAccountsMs();
@@ -354,6 +421,7 @@ async function runBulkRenameJob(jobId: string) {
       let lastError = "";
       let done = false;
       const triedCandidates: string[] = [];
+      const IN_SESSION_BATCH = Number(process.env.RENAME_IN_SESSION_BATCH || 8);
 
       renameLog("account_loaded", {
         dbUsername: acc.username,
@@ -361,46 +429,99 @@ async function runBulkRenameJob(jobId: string) {
         hasSession: Boolean(acc.session?.length),
       });
 
-      /** Ask Groq for a fresh name that hasn't been tried yet. Falls back to random suffix. */
-      const nextCandidate = async (): Promise<string> => {
-        const allTried = [...triedCandidates, acc.username, ...names];
-        const alt = await groqGenerateAlternativeUsername(allTried, (job as any).prompt);
-        if (alt) {
-          renameLog("retry_candidate_chosen", { candidate: alt, source: "groq" });
-          return sanitizeTikTokUsername(alt);
+      /** Generate a batch of candidates to try inside one browser session. */
+      const buildCandidateBatch = async (primary: string): Promise<string[]> => {
+        const batch: string[] = [];
+        const seen = new Set<string>(triedCandidates.map((s) => s.toLowerCase()));
+        seen.add(acc.username.toLowerCase());
+
+        const addIfNew = (c: string) => {
+          const s = sanitizeTikTokUsername(c);
+          if (s.length >= 4 && !seen.has(s.toLowerCase())) {
+            seen.add(s.toLowerCase());
+            batch.push(s);
+          }
+        };
+
+        addIfNew(primary);
+
+        const promptExamples = extractExampleUsernamesFromPrompt((job as any).prompt);
+        const base = primary.replace(/\d+$/, "");
+        const bases = [base, ...promptExamples.map((e) => e.replace(/\d+$/, ""))].filter(Boolean);
+        for (const b of bases) {
+          for (let suf = 1; suf <= 30 && batch.length < IN_SESSION_BATCH; suf++) {
+            addIfNew(b.slice(0, 22) + (suf < 10 ? `0${suf}` : String(suf)));
+          }
         }
-        const fb = sanitizeTikTokUsername(
-          `${names[idx] || item.username}_${randomUsernameSuffix()}${triedCandidates.length}`
-        );
-        renameLog("retry_candidate_chosen", { candidate: fb, source: "random_suffix" });
-        return fb;
+
+        // Fill remaining batch slots with Groq alternatives + random suffixes
+        for (let g = 0; g < 3 && batch.length < IN_SESSION_BATCH; g++) {
+          const allTried = [...triedCandidates, ...batch, acc.username, ...names];
+          const alt = await groqGenerateAlternativeUsername(allTried, (job as any).prompt);
+          if (alt) addIfNew(alt);
+        }
+        for (let r = 0; batch.length < IN_SESSION_BATCH && r < 5; r++) {
+          addIfNew(`${bases[0] || "user"}_${randomUsernameSuffix()}${r}`);
+        }
+
+        return batch.slice(0, IN_SESSION_BATCH);
       };
 
-      for (let attempt = 0; attempt < MAX_TIKTOK_USERNAME_ATTEMPTS; attempt++) {
-        candidate = sanitizeTikTokUsername(candidate);
-        triedCandidates.push(candidate);
-        renameLog("attempt", { attempt: attempt + 1, max: MAX_TIKTOK_USERNAME_ATTEMPTS, candidate });
+      // Filter candidates through app DB before sending to browser
+      const filterFreeInDb = async (batch: string[]): Promise<string[]> => {
+        const out: string[] = [];
+        for (const c of batch) {
+          const free = await isHandleFreeForAccount(c, item.accountId);
+          if (free.ok) {
+            out.push(c);
+          } else {
+            renameLog("candidate_not_free_in_app_db", { reason: free.reason, candidate: c });
+          }
+        }
+        return out;
+      };
 
-        const free = await isHandleFreeForAccount(candidate, item.accountId);
-        if (!free.ok) {
-          lastError = free.reason;
-          renameLog("candidate_not_free_in_app_db", { reason: free.reason, candidate });
-          candidate = await nextCandidate();
+      for (let round = 0; round < MAX_TIKTOK_USERNAME_ATTEMPTS; round++) {
+        const batch = await buildCandidateBatch(candidate);
+        const freeBatch = await filterFreeInDb(batch);
+
+        if (freeBatch.length === 0) {
+          renameLog("no_free_candidates_generating_more", { round, batchSize: batch.length });
+          // All suffix variants taken in app DB — ask Groq for something fresh
+          const allTried = [...triedCandidates, ...batch, acc.username, ...names];
+          const groqAlt = await groqGenerateAlternativeUsername(allTried, (job as any).prompt);
+          if (groqAlt) {
+            candidate = sanitizeTikTokUsername(groqAlt);
+            renameLog("groq_rescued_empty_batch", { candidate });
+            continue;
+          }
+          // Groq also failed — try random suffix as last resort
+          candidate = sanitizeTikTokUsername(
+            `${(names[idx] || item.username).slice(0, 16)}_${randomUsernameSuffix()}${round}`
+          );
+          renameLog("random_rescued_empty_batch", { candidate });
           continue;
         }
+
+        renameLog("attempt_batch", { round: round + 1, max: MAX_TIKTOK_USERNAME_ATTEMPTS, candidates: freeBatch });
 
         const r = await renameTikTokUsername({
           sessionJson: acc.session,
           currentUsername: acc.username,
-          newUsername: candidate,
+          newUsername: freeBatch[0],
+          fallbackCandidates: freeBatch.slice(1),
           proxy,
         });
 
+        triedCandidates.push(...(r.triedUnavailable || []));
+        const applied = r.appliedCandidate || freeBatch[0];
+
         renameLog("playwright_result", {
-          candidate,
+          applied,
           ok: r.ok,
           verified: r.verified,
           error: r.error,
+          triedUnavailable: r.triedUnavailable,
         });
 
         if (is30DayUsernameCooldownError(r.error)) {
@@ -408,47 +529,34 @@ async function runBulkRenameJob(jobId: string) {
           renameLog("rename_blocked_30_day_cooldown", {
             accountId: String(item.accountId),
             oldUsernameLive: acc.username,
-            oldUsernameJobSnapshot: item.username,
-            attemptedNewUsername: candidate,
-            message:
-              "TikTok blocks username changes within ~30 days — not retrying other candidate names for this account",
+            attemptedNewUsername: applied,
+            message: "TikTok blocks username changes within ~30 days — not retrying",
           });
           console.warn(
-            `[rename] Name NOT changed — accountId=${String(item.accountId)} OLD @${acc.username} | tried NEW @${candidate} | ${lastError}`
+            `[rename] Name NOT changed — accountId=${String(item.accountId)} OLD @${acc.username} | ${lastError}`
           );
           break;
         }
 
         if (r.ok && r.verified) {
-          const persist = await saveAccountUsername(item.accountId, candidate);
-          renameLog("mongo_persist", {
-            candidate,
-            ok: persist.ok,
-            error: persist.ok ? undefined : persist.error,
-          });
+          const persist = await saveAccountUsername(item.accountId, applied);
+          renameLog("mongo_persist", { candidate: applied, ok: persist.ok, error: persist.ok ? undefined : persist.error });
           if (persist.ok) {
             await RenameJobModel.updateOne(
               { _id: jobId, "items.accountId": item.accountId },
               {
                 $set: {
                   "items.$.status": "done",
-                  "items.$.proposedName": candidate,
-                  "items.$.appliedUsername": candidate,
+                  "items.$.proposedName": applied,
+                  "items.$.appliedUsername": applied,
                   "items.$.error": undefined,
                 },
               }
             );
             done = true;
-            renameLog("item_done", { appliedUsername: candidate });
-            renameLog("rename_audit_persisted", {
-              jobId: String(jobId),
-              accountId: String(item.accountId),
-              usernameBefore: item.username,
-              usernameAfter: candidate,
-              note: "RenameJob.items.username left unchanged (snapshot); Account.username updated to usernameAfter",
-            });
+            renameLog("item_done", { appliedUsername: applied });
             console.info(
-              `[rename] Name saved — accountId=${String(item.accountId)} OLD @${acc.username} → NEW @${candidate} (MongoDB Account.username updated)`
+              `[rename] Name saved — accountId=${String(item.accountId)} OLD @${acc.username} → NEW @${applied}`
             );
             break;
           }
@@ -461,16 +569,20 @@ async function runBulkRenameJob(jobId: string) {
         const shouldRetry =
           lastError === "Username not available" ||
           (typeof lastError === "string" && lastError.startsWith("Verification failed")) ||
-          lastError === "TikTok UI did not respond after save";
+          lastError === "TikTok UI did not respond after save" ||
+          lastError === "Page load timeout" ||
+          lastError === "Username input not found" ||
+          lastError === "Save button not found";
 
         if (shouldRetry) {
-          renameLog("retry_new_candidate", { previous: candidate, reason: lastError, attemptsDone: attempt + 1 });
+          renameLog("retry_next_round", { reason: lastError, triedSoFar: triedCandidates.length, round: round + 1 });
           const betweenAttemptMs = Number(process.env.RENAME_BETWEEN_ATTEMPT_MS || 2500);
-          if (betweenAttemptMs > 0) {
-            renameLog("between_attempt_sleep", { ms: betweenAttemptMs });
-            await new Promise((r) => setTimeout(r, betweenAttemptMs));
-          }
-          candidate = await nextCandidate();
+          if (betweenAttemptMs > 0) await new Promise((r) => setTimeout(r, betweenAttemptMs));
+          // Pick a fresh primary for the next round
+          const alt = await groqGenerateAlternativeUsername([...triedCandidates, acc.username, ...names], (job as any).prompt);
+          candidate = alt ? sanitizeTikTokUsername(alt) : sanitizeTikTokUsername(
+            `${names[idx] || item.username}_${randomUsernameSuffix()}${triedCandidates.length}`
+          );
           continue;
         }
 
