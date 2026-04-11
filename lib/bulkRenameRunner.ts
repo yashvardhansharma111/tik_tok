@@ -336,7 +336,7 @@ async function saveAccountUsername(accountId: mongoose.Types.ObjectId, newUserna
 }
 
 async function sleepBetweenAccountsMs(): Promise<void> {
-  const ms = Number(process.env.RENAME_BETWEEN_ACCOUNTS_MS || 25000);
+  const ms = Number(process.env.RENAME_BETWEEN_ACCOUNTS_MS || 5000);
   if (ms <= 0) return;
   renameLog("between_accounts_sleep", { ms });
   await new Promise((r) => setTimeout(r, ms));

@@ -13,13 +13,13 @@ import { claimNextPendingUploadForAccount } from "@/lib/mongoUploadChainClaim";
 import { getUploadParallelAdminCap } from "@/lib/uploadParallelConfig";
 import {
   runUploadWithSession,
-  poolSessionHandleAfterUploadChain,
   discardUploadSessionHandle,
 } from "@/automation/uploadWorker";
+import { clearAllUploadContexts } from "@/lib/uploadContextPool";
 import { resolveOptimizedVideoPath } from "@/lib/optimizeVideoForUpload";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
-import { afterCampaignUploadSuccess } from "@/lib/campaignJobQueue";
+import { afterCampaignUploadSuccess, afterCampaignJobPermanentFail } from "@/lib/campaignJobQueue";
 import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
 
 /** Single runner + abort handle survives Next.js HMR better than module-local flags alone. */
@@ -97,6 +97,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             },
           }
         );
+        await afterCampaignJobPermanentFail({
+          campaignId: (upload as any).campaignId,
+          accountId,
+          campaignStep: (upload as any).campaignStep ?? 0,
+          error: err,
+        }).catch(() => {});
         if (sessionHandle) {
           await discardUploadSessionHandle(sessionHandle);
           sessionHandle = undefined;
@@ -118,6 +124,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             },
           }
         );
+        await afterCampaignJobPermanentFail({
+          campaignId: (upload as any).campaignId,
+          accountId,
+          campaignStep: (upload as any).campaignStep ?? 0,
+          error: "account_not_found",
+        }).catch(() => {});
         if (sessionHandle) {
           await discardUploadSessionHandle(sessionHandle);
           sessionHandle = undefined;
@@ -231,7 +243,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         if (chainEnabled && result.sessionHandle) {
           const next = await claimNextPendingUploadForAccount(accountId);
           if (next) {
-            console.log("[MongoRunner] chain: next job same account", {
+            console.log("[MongoRunner] chain: next job same account — reusing browser", {
               accountId,
               nextUploadId: next.uploadId,
             });
@@ -240,7 +252,9 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             upload = next;
             continue;
           }
-          await poolSessionHandleAfterUploadChain(result.sessionHandle);
+          // No more videos for this account — close the session instead of pooling
+          console.log("[MongoRunner] no more jobs for account — closing browser session");
+          await discardUploadSessionHandle(result.sessionHandle);
         }
 
         upload = null;
@@ -254,8 +268,10 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       }
       await markAccountExpiredIfSessionError(accountId, errorMsg);
 
-      const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 1));
-      const shouldRetry = !isSessionExpiredError(errorMsg) && attemptNumber < maxAttempts;
+      const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 2));
+      const isBrowserClosed = /BROWSER_CLOSED|page.*closed|context.*closed|browser.*closed/i.test(errorMsg);
+      const effectiveMax = isBrowserClosed ? Math.max(maxAttempts, 2) : maxAttempts;
+      const shouldRetry = !isSessionExpiredError(errorMsg) && attemptNumber < effectiveMax;
 
       if (shouldRetry) {
         const retryDelayMs = Number(process.env.UPLOAD_RETRY_DELAY_MS || 15000);
@@ -274,6 +290,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
           { _id: uploadObjectId },
           { $set: { status: "failed", error: errorMsg, nextRetryAt: null } }
         );
+        await afterCampaignJobPermanentFail({
+          campaignId: (upload as any).campaignId,
+          accountId,
+          campaignStep: campaignStep ?? 0,
+          error: errorMsg,
+        });
       }
 
       console.warn("[MongoRunner] failed", {
@@ -297,6 +319,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         { _id: uploadObjectId, status: "uploading" },
         { $set: { status: "failed", error: msg, nextRetryAt: null } }
       ).catch(() => {});
+      await afterCampaignJobPermanentFail({
+        campaignId: (upload as any)?.campaignId,
+        accountId: String(upload?.accountId),
+        campaignStep: (upload as any)?.campaignStep ?? 0,
+        error: msg,
+      }).catch(() => {});
       await cleanupBatchIfLast(uploadId);
       upload = null;
     }
@@ -306,10 +334,8 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 async function runnerLoop(signal: AbortSignal) {
   const batchSize = getUploadParallelAdminCap();
   const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 1400);
-  /** Optional pause after a parallel wave finishes (before the next wave). */
   const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
 
-  const browser = await launchChromium("automation");
   console.log("[MongoRunner] started", {
     serverParallelCap: batchSize,
     UPLOAD_PARALLEL_BATCH_SIZE: process.env.UPLOAD_PARALLEL_BATCH_SIZE ?? "(unset → 32)",
@@ -318,54 +344,81 @@ async function runnerLoop(signal: AbortSignal) {
     hint: "Campaign 'Parallel accounts' cannot exceed serverParallelCap — set UPLOAD_PARALLEL_BATCH_SIZE in .env (e.g. 4) to allow N concurrent accounts per wave.",
   });
 
-  try {
-    while (!signal.aborted) {
-      const claimed = await claimUploadBatch(batchSize, {
-        excludeAccountIds: [...busyAccountIds],
-      });
-      if (!claimed.length) {
-        await sleep(pollIntervalMs);
-        continue;
+  while (!signal.aborted) {
+    const claimed = await claimUploadBatch(batchSize, {
+      excludeAccountIds: [...busyAccountIds],
+    });
+    if (!claimed.length) {
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    for (const job of claimed) {
+      busyAccountIds.add(String(job.accountId));
+    }
+
+    const jobParallelism = Number((claimed[0] as any)?.parallelism) || batchSize;
+    /** Max simultaneous Chromium instances — defaults to wave size; set UPLOAD_MAX_BROWSERS in .env to cap. */
+    const maxBrowsers = Math.max(1, Number(process.env.UPLOAD_MAX_BROWSERS || claimed.length));
+    const oneBrowserPerJob = claimed.length > 1;
+
+    let waveBrowser: Browser | undefined;
+    if (!oneBrowserPerJob) {
+      waveBrowser = await launchChromium("automation");
+    }
+
+    console.log("[MongoRunner] wave claimed", {
+      concurrentJobsThisWave: claimed.length,
+      serverParallelCap: batchSize,
+      batchParallelismField: jobParallelism,
+      maxBrowsersConcurrent: oneBrowserPerJob ? maxBrowsers : 1,
+      uploadId: claimed[0]?.uploadId,
+      accountIds: claimed.map((c: any) => String(c.accountId)),
+      browserMode: oneBrowserPerJob
+        ? `isolated: each job launches its own Chromium (max ${maxBrowsers} concurrent)`
+        : "shared: one browser for this wave (closes after wave)",
+      fewerClaimsThanParallelism:
+        claimed.length < jobParallelism
+          ? "Some jobs not ready yet (notBefore in future), server cap, or no pending rows — if you use stagger>0 with parallelism=1 only, that is expected; with parallelism>1, intra-wave stagger is ignored."
+          : undefined,
+    });
+
+    const browserForJobs = waveBrowser || undefined;
+
+    if (oneBrowserPerJob && claimed.length > maxBrowsers) {
+      // Run in batches of maxBrowsers to avoid launching too many Chromium instances
+      for (let i = 0; i < claimed.length; i += maxBrowsers) {
+        const batch = claimed.slice(i, i + maxBrowsers);
+        const running = batch.map((job: any) =>
+          processUpload(job, undefined).finally(() => {
+            busyAccountIds.delete(String(job.accountId));
+          })
+        );
+        await Promise.allSettled(running);
+        clearAllUploadContexts();
       }
-
-      for (const job of claimed) {
-        busyAccountIds.add(String(job.accountId));
-      }
-
-      const jobParallelism = Number((claimed[0] as any)?.parallelism) || batchSize;
-      /** Sharing one Playwright Browser across concurrent uploads often ends in BROWSER_CLOSED during heavy Studio flows; use a dedicated browser per job when a wave has multiple claims. */
-      const oneBrowserPerJob = claimed.length > 1;
-      console.log("[MongoRunner] wave claimed", {
-        concurrentJobsThisWave: claimed.length,
-        serverParallelCap: batchSize,
-        batchParallelismField: jobParallelism,
-        uploadId: claimed[0]?.uploadId,
-        accountIds: claimed.map((c: any) => String(c.accountId)),
-        browserMode: oneBrowserPerJob
-          ? "isolated: each job launches its own Chromium (parallel-safe)"
-          : "shared: runner holds one Chromium for this single job",
-        fewerClaimsThanParallelism:
-          claimed.length < jobParallelism
-            ? "Some jobs not ready yet (notBefore in future), server cap, or no pending rows — if you use stagger>0 with parallelism=1 only, that is expected; with parallelism>1, intra-wave stagger is ignored."
-            : undefined,
-      });
-
-      const browserForJobs = oneBrowserPerJob ? undefined : browser;
+    } else {
       const running = claimed.map((job: any) =>
         processUpload(job, browserForJobs).finally(() => {
           busyAccountIds.delete(String(job.accountId));
         })
       );
       await Promise.allSettled(running);
-
-      if (signal.aborted) break;
-      if (batchGapMs > 0) await sleep(batchGapMs);
-      await sleep(pollIntervalMs);
     }
-  } finally {
-    await browser.close().catch(() => {});
-    console.log("[MongoRunner] stopped");
+
+    // Close the wave browser and flush stale pooled contexts
+    clearAllUploadContexts();
+    if (waveBrowser) {
+      await waveBrowser.close().catch(() => {});
+      console.log("[MongoRunner] wave browser closed");
+    }
+
+    if (signal.aborted) break;
+    if (batchGapMs > 0) await sleep(batchGapMs);
+    await sleep(pollIntervalMs);
   }
+
+  console.log("[MongoRunner] stopped");
 }
 
 export function ensureMongoUploadRunnerStarted() {
@@ -388,6 +441,9 @@ export function ensureMongoUploadRunnerStarted() {
       await runnerLoop(ac.signal);
     } catch (e) {
       console.error("[MongoRunner] fatal", e);
+    } finally {
+      ac.abort();
+      console.log("[MongoRunner] runner loop ended — next ensureStart will restart");
     }
   }, 0);
 }

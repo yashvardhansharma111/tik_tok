@@ -6,18 +6,18 @@ import type { Locator, Page } from "playwright";
  */
 export function getHumanTimingScale(): number {
   const raw = process.env.HUMAN_TIMING_SCALE;
-  if (raw === undefined || raw === "") return 0.22;
+  if (raw === undefined || raw === "") return 0.7;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 0.22;
+  if (!Number.isFinite(n)) return 0.7;
   return Math.min(2, Math.max(0.12, n));
 }
 
 /** Music picker delays (`TIKTOK_MUSIC_TIMING_SCALE`). */
 export function getMusicTimingScale(): number {
   const raw = process.env.TIKTOK_MUSIC_TIMING_SCALE;
-  if (raw === undefined || raw === "") return 0.14;
+  if (raw === undefined || raw === "") return 0.55;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 0.14;
+  if (!Number.isFinite(n)) return 0.55;
   return Math.min(1.5, Math.max(0.08, n));
 }
 
@@ -65,28 +65,28 @@ export async function humanScroll(page: Page): Promise<void> {
 }
 
 /**
- * Caption: **`fill()` by default** (fast). Set `TIKTOK_CAPTION_TYPE_HUMAN=1` for per-character typing.
+ * Caption: per-character typing by default (human-like). Set `TIKTOK_CAPTION_TYPE_HUMAN=0` to use instant fill().
  */
 export async function typeTextLikeHuman(page: Page, locator: Locator, text: string): Promise<void> {
-  if (process.env.TIKTOK_CAPTION_TYPE_HUMAN === "1") {
-    const scale = getHumanTimingScale();
-    const minD = Math.max(5, Math.round(Number(process.env.TIKTOK_CAPTION_CHAR_DELAY_MIN_MS || 14) * scale));
-    const maxD = Math.max(minD, Math.round(Number(process.env.TIKTOK_CAPTION_CHAR_DELAY_MAX_MS || 32) * scale));
-    for (const ch of text) {
-      await locator.type(ch, { delay: 0 });
-      await page.waitForTimeout(humanRand(minD, maxD));
-    }
+  if (process.env.TIKTOK_CAPTION_TYPE_HUMAN === "0") {
+    await locator.fill("").catch(() => {});
+    await page.waitForTimeout(20);
+    await locator.fill(text).catch(async () => {
+      await locator.press(process.platform === "darwin" ? "Meta+A" : "Control+A").catch(() => {});
+      await locator.press("Backspace").catch(() => {});
+      for (const ch of text) {
+        await locator.type(ch, { delay: 0 });
+        await page.waitForTimeout(humanRand(30, 70));
+      }
+    });
     return;
   }
-  await locator.fill("").catch(() => {});
-  await page.waitForTimeout(20);
-  await locator.fill(text).catch(async () => {
-    await locator.press(process.platform === "darwin" ? "Meta+A" : "Control+A").catch(() => {});
-    await locator.press("Backspace").catch(() => {});
-    for (const ch of text) {
-      await locator.type(ch, { delay: 0 });
-      await page.waitForTimeout(humanRand(8, 18));
-    }
-  });
-  await page.waitForTimeout(40);
+  const scale = getHumanTimingScale();
+  const minD = Math.max(20, Math.round(Number(process.env.TIKTOK_CAPTION_CHAR_DELAY_MIN_MS || 45) * scale));
+  const maxD = Math.max(minD, Math.round(Number(process.env.TIKTOK_CAPTION_CHAR_DELAY_MAX_MS || 95) * scale));
+  for (const ch of text) {
+    await locator.type(ch, { delay: 0 });
+    await page.waitForTimeout(humanRand(minD, maxD));
+  }
+  return;
 }

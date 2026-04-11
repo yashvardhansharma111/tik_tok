@@ -206,12 +206,44 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
     return;
   }
 
+  await advanceCampaignWave(c, "success");
+}
+
+/**
+ * After a permanent upload failure (all retries exhausted), count this account as done
+ * for wave advancement so the campaign doesn't get stuck on one failed account.
+ */
+export async function afterCampaignJobPermanentFail(failedUpload: any): Promise<void> {
+  const campaignId = failedUpload.campaignId;
+  if (!campaignId) return;
+
+  const c = await CampaignModel.findOne({ uploadId: campaignId }).lean();
+  if (!c || c.status !== "active") return;
+
+  const accountId = String(failedUpload.accountId);
+  const accIdx = (c.accountIds as any[]).findIndex((id) => String(id) === accountId);
+  if (accIdx < 0) return;
+
+  console.log("[Campaign] account permanently failed — counting toward wave advancement", {
+    uploadId: c.uploadId,
+    accountId,
+    campaignStep: failedUpload.campaignStep ?? 0,
+    error: failedUpload.error || "unknown",
+  });
+
+  await advanceCampaignWave(c, "fail");
+}
+
+/**
+ * Shared wave-advancement logic: atomically increment `accountsFinishedInWave`,
+ * and if the wave is complete, enqueue the next wave or start the next cycle.
+ */
+async function advanceCampaignWave(c: any, reason: "success" | "fail"): Promise<void> {
+  const uploadId = c.uploadId as string;
+
   /**
-   * Count this account as finished for the current wave. Must be atomic: two parallel browsers
-   * can complete the last video at the same time; a separate findById after $inc can show
-   * `accountsFinishedInWave === waveSize` to *both* callers even though only one increment
-   * reached the threshold — that duplicated `enqueueCampaignWave` and re-opened browsers.
-   * Only the process whose increment made `accountsFinishedInWave === waveSize` may advance.
+   * Atomic increment: two parallel browsers can complete the last video at the same time;
+   * only the process whose increment makes `accountsFinishedInWave === waveSize` may advance.
    */
   const bumped = await CampaignModel.findOneAndUpdate(
     { _id: (c as any)._id, status: "active" },
@@ -237,6 +269,7 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
     waveStartAccountIndex: start,
     parallelism: P,
     totalAccounts: total,
+    lastAccountReason: reason,
   });
 
   const nextStart = start + P;

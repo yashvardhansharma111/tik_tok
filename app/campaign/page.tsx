@@ -2,15 +2,41 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
 
 type Account = { id: string; username: string; hasSession?: boolean };
 
+type CampaignProgress = {
+  uploadId: string;
+  status: string;
+  createdAt: string;
+  videoCount: number;
+  accountCount: number;
+  accountUsernames: string[];
+  parallelism: number;
+  captionMode: string;
+  musicQuery: string | null;
+  repeatForever: boolean;
+  maxCycles: number | null;
+  currentCycle: number;
+  cycleGapSeconds: number;
+  wave: { start: number; size: number; finished: number };
+  jobs: {
+    total: number;
+    totalExpectedThisCycle: number;
+    success: number;
+    failed: number;
+    uploading: number;
+    pending: number;
+  };
+};
+
 export default function CampaignPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [activeCampaigns, setActiveCampaigns] = useState<CampaignProgress[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [captions, setCaptions] = useState("");
   const [musicQuery, setMusicQuery] = useState("");
@@ -27,6 +53,19 @@ export default function CampaignPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const addVideosInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchProgress = useCallback(async () => {
+    try {
+      const r = await fetch("/api/campaign/progress");
+      if (r.ok) setActiveCampaigns(await r.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchProgress();
+    const iv = setInterval(fetchProgress, 5000);
+    return () => clearInterval(iv);
+  }, [fetchProgress]);
 
   const previewUrls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
   useEffect(() => {
@@ -141,6 +180,7 @@ export default function CampaignPage() {
       setFiles([]);
       setCaptions("");
       setMusicQuery("");
+      fetchProgress();
     } else {
       setMsg(data.error || "Failed");
     }
@@ -153,6 +193,111 @@ export default function CampaignPage() {
         title="Multi-video campaign"
         description="Upload several videos, pick accounts in order, set parallelism (waves of accounts), optional shuffle per account, captions, and optional repeats (a set number of full passes or forever) with a gap between cycles. Each account posts all its videos in sequence on one browser tab; the next wave runs when those finish."
       />
+
+      {activeCampaigns.length > 0 && (
+        <div className="mb-8 space-y-4">
+          <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Active campaigns</h2>
+          {activeCampaigns.map((c) => {
+            const { jobs } = c;
+            const done = jobs.success + jobs.failed;
+            const total = jobs.total || 1;
+            const pctDone = Math.round((done / total) * 100);
+            const pctSuccess = Math.round((jobs.success / total) * 100);
+            const pctFailed = Math.round((jobs.failed / total) * 100);
+            const pctUploading = Math.round((jobs.uploading / total) * 100);
+
+            return (
+              <div
+                key={c.uploadId}
+                className="rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-5 shadow-lg dark:border-zinc-800"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
+                      {c.videoCount} videos &times; {c.accountCount} accounts
+                      <span className="ml-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                        {c.uploadId}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      Cycle {c.currentCycle + 1}
+                      {c.repeatForever ? " (repeat forever)" : ` / ${c.maxCycles}`}
+                      {" · "}Wave {Math.floor(c.wave.start / c.parallelism) + 1} ({c.wave.finished}/{c.wave.size} accounts done)
+                      {" · "}Parallelism {c.parallelism}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                    {c.status}
+                  </span>
+                </div>
+
+                <div className="mt-3">
+                  <div className="mb-1.5 flex items-baseline justify-between text-xs">
+                    <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+                      {pctDone}% complete
+                    </span>
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      {done} / {total} jobs
+                    </span>
+                  </div>
+                  <div className="h-3 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                    <div className="flex h-full">
+                      {pctSuccess > 0 && (
+                        <div
+                          className="bg-emerald-500 transition-all duration-500"
+                          style={{ width: `${pctSuccess}%` }}
+                        />
+                      )}
+                      {pctFailed > 0 && (
+                        <div
+                          className="bg-red-500 transition-all duration-500"
+                          style={{ width: `${pctFailed}%` }}
+                        />
+                      )}
+                      {pctUploading > 0 && (
+                        <div
+                          className="animate-pulse bg-amber-400 transition-all duration-500"
+                          style={{ width: `${pctUploading}%` }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{jobs.success} success</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" />
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{jobs.failed} failed</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-amber-400" />
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{jobs.uploading} uploading</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-400" />
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{jobs.pending} pending</span>
+                  </span>
+                </div>
+
+                {c.accountUsernames.length > 0 && (
+                  <p className="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    Accounts: {c.accountUsernames.join(", ")}
+                    {c.accountCount > c.accountUsernames.length && ` +${c.accountCount - c.accountUsernames.length} more`}
+                  </p>
+                )}
+
+                <p className="mt-1 text-[0.65rem] text-zinc-400 dark:text-zinc-500">
+                  Started {new Date(c.createdAt).toLocaleString()}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <form onSubmit={submit} className="space-y-8">
         <section className="rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-6 shadow-lg dark:border-zinc-800">

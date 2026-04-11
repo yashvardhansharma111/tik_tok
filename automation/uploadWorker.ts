@@ -63,6 +63,25 @@ export const TIKTOK_MUSIC_FLOW_SELECTORS = {
   apply_buttons: 'getByRole("button", { name: /use this sound|use sound|confirm|done/i })',
 } as const;
 
+/** Broad Plus-button selector covering TikTok's evolving icon attributes. */
+const PLUS_BTN_CSS = [
+  'button:has([data-icon="PlusBold"])',
+  'button:has([data-testid="PlusBold"])',
+  'button:has([data-icon="Plus"])',
+  'button:has([data-testid="Plus"])',
+  'button:has([data-icon="AddOutlined"])',
+  '[role="button"]:has([data-icon="PlusBold"])',
+  '[role="button"]:has([data-icon="Plus"])',
+  'button[data-icon-only="true"]',
+].join(", ");
+
+/** Fallback selectors when the primary PLUS_BTN_CSS doesn't match. */
+const PLUS_BTN_FALLBACK_CSS = [
+  'button[aria-label*="add" i]',
+  'button[aria-label*="plus" i]',
+  'button[title*="add" i]',
+].join(", ");
+
 /** Min score to accept a match on the user's primary search (else try region fallbacks). */
 const MUSIC_PRIMARY_MIN_SCORE = 12;
 const MUSIC_QUICK_ADD_MIN_SCORE = 18;
@@ -1267,6 +1286,32 @@ try {
   const afterClickValue = await searchInput.inputValue().catch(() => "");
   ctx.flow(`[music] suggestion click -> input value now: "${(afterClickValue || "").slice(0, 80)}"`);
   await musicDebugShot(ctx, page, "step-music-suggestion-clicked.png");
+
+  // TikTok autocomplete can replace the input with something unrelated after a
+  // suggestion click.  If that happened, overwrite the input with the original query
+  // so the subsequent Enter searches for the right thing.
+  const afterNorm = normalizeMusicText(afterClickValue || "");
+  const queryNorm = normalizeMusicText(musicQuery);
+  const bestNormAfter = normalizeMusicText(best.text);
+  if (
+    afterNorm &&
+    afterNorm !== queryNorm &&
+    afterNorm !== bestNormAfter &&
+    !afterNorm.includes(queryNorm) &&
+    !queryNorm.includes(afterNorm)
+  ) {
+    ctx.flow(`[music] suggestion replaced input with unrelated value — restoring original query`);
+    await searchInput.click({ force: true }).catch(() => {});
+    const selectAll = process.platform === "darwin" ? "Meta+A" : "Control+A";
+    await searchInput.press(selectAll).catch(() => {});
+    await searchInput.press("Backspace").catch(() => {});
+    await page.waitForTimeout(scaledMusicRand(60, 120));
+    await searchInput.fill(musicQuery).catch(async () => {
+      await searchInput.type(musicQuery, { delay: scaledMusicRand(4, 12) });
+    });
+    await page.waitForTimeout(scaledMusicRand(200, 400));
+  }
+
   await page.waitForTimeout(scaledMusicRand(700, 1200));
   return true;
 }
@@ -1383,10 +1428,8 @@ async function runSearchInPanel(
     await searchInput.press("Enter").catch(() => {});
     await page.keyboard.press("Enter").catch(() => {});
     await page.waitForTimeout(scaledMusicRand(320, 580));
-    await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(scaledMusicRand(100, 220));
-    await page.keyboard.press("Escape").catch(() => {});
-    await panelRoot.click({ force: true }).catch(() => {});
+    // Click panel body to dismiss suggestion dropdown (Escape would close the panel)
+    await panelRoot.click({ position: { x: 10, y: 10 }, force: true }).catch(() => {});
     return;
   }
 
@@ -1395,9 +1438,9 @@ async function runSearchInPanel(
   for (let i = 0; i < term.length; i++) {
     throwIfAborted(signal);
     const ch = term[i];
-    await searchInput.type(ch, { delay: scaledMusicRand(8, 22) });
+    await searchInput.type(ch, { delay: scaledMusicRand(55, 110) });
     typed += ch;
-    await page.waitForTimeout(scaledMusicRand(85, 180));
+    await page.waitForTimeout(scaledMusicRand(80, 160));
 
     const trimmed = typed.trim();
     if (trimmed.length < 6) continue;
@@ -1412,10 +1455,7 @@ async function runSearchInPanel(
       await page.keyboard.press("Enter").catch(() => {});
       ctx.flow("[music] search: pressed Enter after suggestion click");
       await page.waitForTimeout(scaledMusicRand(260, 480));
-      await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(scaledMusicRand(90, 200));
-      await page.keyboard.press("Escape").catch(() => {});
-      await panelRoot.click({ force: true }).catch(() => {});
+      await panelRoot.click({ position: { x: 10, y: 10 }, force: true }).catch(() => {});
       return;
     }
 
@@ -1446,8 +1486,9 @@ async function runSearchInPanel(
     await page.waitForTimeout(scaledMusicRand(380, 650));
   }
 
-  // Suggestions dropdown can overlay the results list (and Plus buttons) — dismiss it.
-  await page.keyboard.press("Escape").catch(() => {});
+  // Dismiss suggestions dropdown by clicking the panel body (Escape would close the entire panel).
+  await panelRoot.click({ position: { x: 10, y: 10 }, force: true }).catch(() => {});
+  await page.waitForTimeout(200);
 }
 
 async function isSoundPickerUiOpen(page: Page): Promise<boolean> {
@@ -1474,6 +1515,35 @@ async function waitForSoundPickersClosed(page: Page, timeoutMs: number): Promise
     await page.waitForTimeout(350);
   }
   return false;
+}
+
+/**
+ * After the sound picker closes, TikTok shows the applied sound title
+ * near the "Sounds" button or in a label/row in the composer.
+ */
+async function readAppliedSoundFromComposer(page: Page): Promise<string | null> {
+  // TikTok usually shows the sound name near the Sounds button or in a marquee/label
+  const candidates = [
+    page.locator('[data-e2e*="sound" i] + *, [data-e2e*="sound" i] ~ *').first(),
+    page.locator('[class*="sound-name" i], [class*="SoundName" i], [class*="music-name" i]').first(),
+    page.locator('[class*="marquee" i]').first(),
+    page.getByText(/^♫/).first(),
+    page.locator('[data-e2e*="music" i]').first(),
+  ];
+  for (const loc of candidates) {
+    const text = ((await loc.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    if (text && text.length > 2 && text.length < 200 && !/^(sounds?|music|add sound|select)$/i.test(text)) {
+      return text;
+    }
+  }
+  // Fallback: look for any text near the Sounds button
+  const soundsBtn = page.getByRole("button", { name: /^sounds$/i }).first();
+  if (await soundsBtn.isVisible().catch(() => false)) {
+    const sibling = soundsBtn.locator("xpath=following-sibling::*[1]").first();
+    const txt = ((await sibling.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    if (txt && txt.length > 2 && txt.length < 200) return txt;
+  }
+  return null;
 }
 
 async function verifySoundAppliedStrict(
@@ -1814,7 +1884,7 @@ async function clickApplySoundIfPresent(page: Page, ctx: FlowContext, timeoutMs:
 
   while (Date.now() < deadline) {
     const plusInDialog = frontDialog
-      .locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])')
+      .locator(PLUS_BTN_CSS)
       .first();
     if ((await plusInDialog.isVisible().catch(() => false)) && !(await plusInDialog.isDisabled().catch(() => true))) {
       await plusInDialog.click({ force: true }).catch(() => {});
@@ -1923,15 +1993,14 @@ async function tryQuickAddAndSaveAfterSearch(
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const plusInPanel = best.loc
-      .locator(
-        'button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"]), xpath=ancestor-or-self::*[.//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]][1]//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]'
-      )
-      .first();
+    let plusInPanel = best.loc.locator(PLUS_BTN_CSS).first();
+    if (!(await plusInPanel.isVisible().catch(() => false))) {
+      plusInPanel = best.loc.locator(PLUS_BTN_FALLBACK_CSS).first();
+    }
     if ((await plusInPanel.isVisible().catch(() => false)) && !(await plusInPanel.isDisabled().catch(() => true))) {
       await plusInPanel.click({ force: true }).catch(() => {});
       ctx.flow(
-        "[music][audio] quick-add: clicked PlusBold inside best row locator (not global) — adds that sound"
+        "[music][audio] quick-add: clicked Plus inside best row locator — adds that sound"
       );
       await page.waitForTimeout(120);
 
@@ -1962,55 +2031,148 @@ async function tryQuickAddAndSaveRelaxedAfterSearch(
   panelRoot: PwLocator,
   ctx: FlowContext,
   timeoutMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  musicQuery?: string
 ): Promise<{ ok: boolean; pickedText?: string }> {
-  await page.waitForTimeout(scaledMusicRand(280, 520));
-  await page.keyboard.press("Escape").catch(() => {});
+  // Wait for search results to render after Enter was pressed
+  await page.waitForTimeout(scaledMusicRand(600, 1200));
+  const queryNorm = normalizeMusicText(musicQuery || "");
+  const queryCompact = queryNorm.replace(/[\s&+,·\-]+/g, ""); // "richthekid zeddy will" → "richthekidzeddywill"
+  const queryTokens = queryNorm.split(/[\s&+,]+/).filter((t) => t.length >= 2);
   const deadline = Date.now() + timeoutMs;
+
+  let loggedWaiting = false;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
-    const plusBtns = panelRoot.locator('button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"])');
-    const n = await plusBtns.count().catch(() => 0);
-    if (n > 0) {
-      ctx.flow(`[music][audio] relaxed quick-add: found ${n} PlusBold button(s) in panel (trying first visible, index order 0..13)`);
-    }
-    for (let i = 0; i < Math.min(n, 14); i++) {
-      const plus = plusBtns.nth(i);
-      const visible = await plus.isVisible().catch(() => false);
-      if (!visible) continue;
-      const disabled = await plus.isDisabled().catch(() => true);
-      if (disabled) continue;
 
-      const row = plus.locator(
-        'xpath=ancestor-or-self::*[self::li or self::tr or self::div][.//button[*[@data-icon="PlusBold" or @data-testid="PlusBold"]]][1]'
-      );
-      const pickedText = ((await row.first().innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    // Strategy 1: find sound rows by data-e2e, then locate a clickable button inside each
+    const soundRows = panelRoot.locator('[data-e2e*="sound"], [role="option"], li');
+    const rowCount = await soundRows.count().catch(() => 0);
 
-      await plus.click({ force: true }).catch(() => {});
-      ctx.flow(
-        `[music][audio] relaxed quick-add: clicked PlusBold #${i + 1}/${n} (0-based index ${i}); row text preview "${pickedText.slice(0, 90)}${pickedText.length > 90 ? "…" : ""}"`
-      );
-      await page.waitForTimeout(120);
-
-      const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
-      if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
-        await saveInPanel.click({ force: true }).catch(() => {});
-        ctx.flow("[music][audio] relaxed quick-add: Save in panel after Plus");
-        return { ok: true, pickedText: pickedText || undefined };
-      }
-
-      const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
-      if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
-        await saveGlobal.click({ force: true }).catch(() => {});
-        ctx.flow("[music][audio] relaxed quick-add: Save global after Plus");
-        return { ok: true, pickedText: pickedText || undefined };
-      }
+    // Strategy 2 (fallback): find Plus buttons directly
+    let plusBtns = panelRoot.locator(PLUS_BTN_CSS);
+    let plusCount = await plusBtns.count().catch(() => 0);
+    if (plusCount === 0) {
+      plusBtns = panelRoot.locator(PLUS_BTN_FALLBACK_CSS);
+      plusCount = await plusBtns.count().catch(() => 0);
     }
 
-    await page.waitForTimeout(160);
+    if (rowCount === 0 && plusCount === 0) {
+      if (!loggedWaiting) {
+        ctx.flow("[music][audio] relaxed quick-add: waiting for search results...");
+        loggedWaiting = true;
+      }
+      await page.waitForTimeout(250);
+      continue;
+    }
+
+    type ScoredRow = { index: number; btn: PwLocator; text: string; score: number };
+    const rows: ScoredRow[] = [];
+
+    // Try row-first approach (more reliable)
+    if (rowCount > 0) {
+      for (let i = 0; i < Math.min(rowCount, 14); i++) {
+        const row = soundRows.nth(i);
+        if (!(await row.isVisible().catch(() => false))) continue;
+        const rowText = ((await row.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+        if (!rowText || rowText.length < 3) continue;
+
+        // Find any button inside the row (Plus, Add, etc.)
+        let btn = row.locator(PLUS_BTN_CSS).first();
+        if (!(await btn.isVisible().catch(() => false))) {
+          btn = row.locator('button, [role="button"]').last();
+        }
+        if (!(await btn.isVisible().catch(() => false))) continue;
+        if (await btn.isDisabled().catch(() => true)) continue;
+
+        const rowNorm = normalizeMusicText(rowText);
+        const rowCompact = rowNorm.replace(/[\s&+,·\-]+/g, "");
+        let score = 0;
+        if (queryNorm && rowNorm) {
+          if (rowNorm.includes(queryNorm) || queryNorm.includes(rowNorm)) score = 100;
+          else if (rowCompact.includes(queryCompact) || queryCompact.includes(rowCompact)) score = 95;
+          else {
+            for (const tok of queryTokens) {
+              if (rowNorm.includes(tok) || rowCompact.includes(tok)) score += Math.round(100 / queryTokens.length);
+            }
+          }
+        }
+        rows.push({ index: i, btn, text: rowText, score });
+      }
+    }
+
+    // Fallback: use Plus-button-first approach if row-first yielded nothing
+    if (rows.length === 0 && plusCount > 0) {
+      for (let i = 0; i < Math.min(plusCount, 14); i++) {
+        const plus = plusBtns.nth(i);
+        if (!(await plus.isVisible().catch(() => false))) continue;
+        if (await plus.isDisabled().catch(() => true)) continue;
+
+        let rowText = "";
+        for (const depth of ["xpath=..", "xpath=../..", "xpath=../../..", "xpath=../../../.."]) {
+          const parent = plus.locator(depth).first();
+          const tag = ((await parent.evaluate((el) => el.tagName).catch(() => "")) || "").toLowerCase();
+          const txt = ((await parent.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+          if (txt && txt.length > 3 && txt.length < 300) rowText = txt;
+          if (tag === "li" || tag === "tr" || (tag === "div" && rowText)) break;
+        }
+
+        const rowNorm = normalizeMusicText(rowText);
+        const rowCompact = rowNorm.replace(/[\s&+,·\-]+/g, "");
+        let score = 0;
+        if (queryNorm && rowNorm) {
+          if (rowNorm.includes(queryNorm) || queryNorm.includes(rowNorm)) score = 100;
+          else if (rowCompact.includes(queryCompact) || queryCompact.includes(rowCompact)) score = 95;
+          else {
+            for (const tok of queryTokens) {
+              if (rowNorm.includes(tok) || rowCompact.includes(tok)) score += Math.round(100 / queryTokens.length);
+            }
+          }
+        }
+        rows.push({ index: i, btn: plus, text: rowText, score });
+      }
+    }
+
+    if (rows.length === 0) { await page.waitForTimeout(200); continue; }
+
+    rows.sort((a, b) => b.score - a.score);
+    ctx.flow(
+      `[music][audio] relaxed quick-add: ${rows.length} rows scored — ` +
+      rows.slice(0, 5).map((r) => `#${r.index + 1}(${r.score}): "${r.text.slice(0, 50)}"`).join(" | ")
+    );
+
+    const pick = rows[0];
+    if (queryNorm && pick.score < 30 && rows.length > 1) {
+      ctx.flow(`[music][audio] relaxed quick-add: best match score ${pick.score} is low — picking anyway (no better option)`);
+    }
+
+    await pick.btn.click({ force: true }).catch(() => {});
+    ctx.flow(
+      `[music][audio] relaxed quick-add: clicked row #${pick.index + 1} (score ${pick.score}); "${pick.text.slice(0, 120)}${pick.text.length > 120 ? "…" : ""}"`
+    );
+    await page.waitForTimeout(200);
+
+    const saveInPanel = panelRoot.getByRole("button", { name: /^save$/i }).first();
+    if ((await saveInPanel.isVisible().catch(() => false)) && !(await saveInPanel.isDisabled().catch(() => true))) {
+      await saveInPanel.click({ force: true }).catch(() => {});
+      ctx.flow(`[music] SELECTED song #${pick.index + 1} of ${rows.length} results — "${pick.text.slice(0, 150)}" (match score: ${pick.score}/100)`);
+      return { ok: true, pickedText: pick.text || undefined };
+    }
+
+    const saveGlobal = page.getByRole("button", { name: /^save$/i }).first();
+    if ((await saveGlobal.isVisible().catch(() => false)) && !(await saveGlobal.isDisabled().catch(() => true))) {
+      await saveGlobal.click({ force: true }).catch(() => {});
+      ctx.flow(`[music] SELECTED song #${pick.index + 1} of ${rows.length} results — "${pick.text.slice(0, 150)}" (match score: ${pick.score}/100)`);
+      return { ok: true, pickedText: pick.text || undefined };
+    }
+
+    // No Save button appeared — the Plus click might have been enough (one-step add)
+    await page.waitForTimeout(500);
+    ctx.flow(`[music] SELECTED song #${pick.index + 1} of ${rows.length} results — "${pick.text.slice(0, 150)}" (match score: ${pick.score}/100) [no Save needed]`);
+    return { ok: true, pickedText: pick.text || undefined };
   }
 
-  ctx.flow("[music][audio] relaxed quick-add: no PlusBold+Save combo worked in time");
+  ctx.flow("[music][audio] relaxed quick-add: no sound rows or Plus+Save combo found in time");
   return { ok: false };
 }
 
@@ -2079,7 +2241,8 @@ async function executeOneSoundAttempt(
       workingPanel.panelRoot,
       ctx,
       14000,
-      signal
+      signal,
+      q
     );
     flowTiming(
       ctx,
@@ -2088,7 +2251,7 @@ async function executeOneSoundAttempt(
       Date.now() - tRelaxed,
       relaxedPrimary.ok
         ? "Plus+Save succeeded for primary query"
-        : "looped until 14000ms timeout scanning PlusBold rows in panel",
+        : "looped until 14000ms timeout scanning sound rows in panel",
       `timeoutBudgetMs=14000 TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
     );
     if (relaxedPrimary.ok) {
@@ -2101,9 +2264,15 @@ async function executeOneSoundAttempt(
         Date.now() - tVer,
         okRelaxedPrimary ? "picker closed / title matched" : "sound not confirmed in composer"
       );
-      ctx.flow(`[music] primary selected: ${relaxedPrimary.pickedText || "(unknown)"}`);
+      // Read the actual applied sound title from the composer area
+      let appliedSoundTitle = relaxedPrimary.pickedText || "";
+      if (!appliedSoundTitle) {
+        const soundTitle = await readAppliedSoundFromComposer(page);
+        if (soundTitle) appliedSoundTitle = soundTitle;
+      }
+      ctx.flow(`[music] primary selected: ${appliedSoundTitle || "(unknown)"}`);
       if (okRelaxedPrimary) {
-        setCachedSound(accountUsername, q, relaxedPrimary.pickedText || q);
+        setCachedSound(accountUsername, q, appliedSoundTitle || q);
         flowTiming(
           ctx,
           "music",
@@ -2112,7 +2281,7 @@ async function executeOneSoundAttempt(
           "success via relaxed Plus/Save path",
           `TIKTOK_MUSIC_TIMING_SCALE=${getMusicTimingScale()}`
         );
-        return { ok: true, soundLabel: relaxedPrimary.pickedText || q };
+        return { ok: true, soundLabel: appliedSoundTitle || q };
       }
     }
 
@@ -2156,7 +2325,7 @@ async function executeOneSoundAttempt(
       throwIfAborted(signal);
       ctx.flow(`[music] trying fallback: ${keyword}`);
       await runSearchInPanel(page, workingPanel.searchInput, workingPanel.panelRoot, keyword, ctx, signal);
-      const relaxed = await tryQuickAddAndSaveRelaxedAfterSearch(page, workingPanel.panelRoot, ctx, 14000, signal);
+      const relaxed = await tryQuickAddAndSaveRelaxedAfterSearch(page, workingPanel.panelRoot, ctx, 14000, signal, keyword);
       if (relaxed.ok) {
         const okRelaxed = await verifySoundAppliedStrict(page, keyword, ctx, relaxed.pickedText);
         ctx.flow(`[music] fallback selected: ${relaxed.pickedText || "(unknown)"}`);
@@ -2217,20 +2386,19 @@ async function executeOneSoundAttempt(
 
   // Some TikTok Studio variants require clicking the row's Plus button instead of the row itself.
   // Try it opportunistically before looking for global/dialog apply buttons.
-  const plusInRow = pick.loc
-    .locator(
-      'button:has([data-icon="PlusBold"]), button:has([data-testid="PlusBold"]), [role="button"]:has([data-icon="PlusBold"]), [role="button"]:has([data-testid="PlusBold"])'
-    )
-    .first();
+  let plusInRow = pick.loc.locator(PLUS_BTN_CSS).first();
+  if (!(await plusInRow.isVisible().catch(() => false))) {
+    plusInRow = pick.loc.locator(PLUS_BTN_FALLBACK_CSS).first();
+  }
   const plusVisible = await plusInRow.isVisible().catch(() => false);
   const plusDisabled = await plusInRow.isDisabled().catch(() => true);
   ctx.flow(
-    `[music][audio] in-row PlusBold: visible=${plusVisible} disabled=${plusDisabled} — if visible, click adds this row's sound (avoids wrong global Plus)`
+    `[music][audio] in-row Plus: visible=${plusVisible} disabled=${plusDisabled}`
   );
   if (plusVisible && !plusDisabled) {
     await page.waitForTimeout(scaledMusicRand(240, 420));
     await plusInRow.click({ force: true }).catch(() => {});
-    ctx.flow("[music][audio] clicked: PlusBold inside same row locator — adds audio from that row");
+    ctx.flow("[music][audio] clicked: Plus inside same row locator — adds audio from that row");
     await page.waitForTimeout(250);
   }
 
@@ -2638,7 +2806,7 @@ async function runStudioUploadPipeline(
   await ctx.pauseIfDebug(page, "after upload completes (caption area visible)");
 
   if (captionBox && (await captionBox.isVisible().catch(() => false))) {
-    ctx.flow("caption: fill (fast unless TIKTOK_CAPTION_TYPE_HUMAN=1)");
+    ctx.flow(`caption: ${process.env.TIKTOK_CAPTION_TYPE_HUMAN === "0" ? "fill (fast mode)" : "typing human-like"}`);
     await page.waitForTimeout(scaledHumanRand(80, 180));
     await humanScroll(page);
     await captionBox.click({ force: true });
@@ -2723,7 +2891,9 @@ async function runStudioUploadPipeline(
   await ctx.pauseIfDebug(page, "before clicking Post");
 
   const tPostClick = Date.now();
-  await page.waitForTimeout(scaledHumanRand(100, 200));
+  const prePostMs = Math.max(2000, Number(process.env.TIKTOK_PRE_POST_PAUSE_MS || 2000));
+  ctx.flow(`[post] pausing ${prePostMs}ms before clicking Post`);
+  await page.waitForTimeout(prePostMs);
   await postBtn.click({ force: true });
   ctx.flow("Post clicked");
 

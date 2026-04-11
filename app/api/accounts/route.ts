@@ -14,7 +14,7 @@ function mapAccount(a: any) {
     proxy: a.proxy || "",
     status: a.status,
     lastUsedAt: a.lastUsedAt,
-    hasSession: Boolean(a.session),
+    hasSession: a.hasSession ?? Boolean(a.session),
   };
 }
 
@@ -39,12 +39,32 @@ export async function GET(req: NextRequest) {
   const skip = (page - 1) * limit;
 
   const filter = isAdmin ? {} : accountAccessibleByUser(ownerId);
-  const [accounts, totalInDatabase, linkedCount, listTotal] = await Promise.all([
-    AccountModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+  const userFilter = accountAccessibleByUser(ownerId);
+  const [accounts, totalInDatabase, linkedCount] = await Promise.all([
+    AccountModel.aggregate([
+      { $match: filter },
+      { $sort: { createdAt: -1 as const } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          username: 1,
+          proxy: 1,
+          status: 1,
+          lastUsedAt: 1,
+          hasSession: {
+            $and: [
+              { $ifNull: ["$session", false] },
+              { $ne: ["$session", ""] },
+            ],
+          },
+        },
+      },
+    ]),
     AccountModel.countDocuments({}),
-    AccountModel.countDocuments(accountAccessibleByUser(ownerId)),
-    AccountModel.countDocuments(filter),
+    AccountModel.countDocuments(userFilter),
   ]);
+  const listTotal = isAdmin ? totalInDatabase : linkedCount;
 
   const totalPages = Math.max(1, Math.ceil(listTotal / limit));
 

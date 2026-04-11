@@ -66,7 +66,7 @@ export function buildStickyProxyForAccount(
 
   return {
     server,
-    username,
-    password: `${passwordBase}_session-${sessionKey}${suffix}`,
+    username: `${username}-session-${sessionKey}${suffix}`,
+    password: passwordBase,
   };
 }

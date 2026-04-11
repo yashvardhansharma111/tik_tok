@@ -17,8 +17,8 @@ export function renameLog(step: string, detail?: Record<string, unknown>): void 
 /** Slower pauses for rename flow only (ms). Defaults are intentionally long so you can watch the browser. */
 export function renamePauseMsRange(): { min: number; max: number } {
   return {
-    min: Number(process.env.RENAME_PAUSE_MIN_MS || 8000),
-    max: Number(process.env.RENAME_PAUSE_MAX_MS || 18000),
+    min: Number(process.env.RENAME_PAUSE_MIN_MS || 2000),
+    max: Number(process.env.RENAME_PAUSE_MAX_MS || 4000),
   };
 }
 

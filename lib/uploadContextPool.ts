@@ -58,3 +58,11 @@ export function discardUploadContext(key: string): void {
   entries.delete(key);
   c.close().catch(() => {});
 }
+
+/** Close and drop ALL pooled contexts (e.g. wave browser closing makes them all stale). */
+export function clearAllUploadContexts(): void {
+  for (const [k, c] of entries) {
+    entries.delete(k);
+    c.close().catch(() => {});
+  }
+}

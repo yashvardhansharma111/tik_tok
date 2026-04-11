@@ -302,14 +302,14 @@ async function confirmSetUsernameDialogIfPresent(page: Page): Promise<boolean> {
       const clicked = await clickConfirmInDialog(mainDialog, page);
       if (clicked) {
         renameLog("clicked_confirm_set_username_modal");
-        await renameSlowPause(page, "after_set_username_confirm_click");
+        await page.waitForTimeout(2000).catch(() => {});
         return true;
       }
       renameLog("confirm_modal_visible_retry", {});
       await page.waitForTimeout(stepMs).catch(() => {});
       if (await clickSetUsernameConfirmViaPageDom(page)) {
         renameLog("clicked_confirm_set_username_modal");
-        await renameSlowPause(page, "after_set_username_confirm_click");
+        await page.waitForTimeout(2000).catch(() => {});
         return true;
       }
       await page.waitForTimeout(stepMs).catch(() => {});
@@ -318,7 +318,7 @@ async function confirmSetUsernameDialogIfPresent(page: Page): Promise<boolean> {
 
     if (!sawModal && (await clickSetUsernameConfirmViaPageDom(page))) {
       renameLog("clicked_confirm_dom_without_dialog_locator");
-      await renameSlowPause(page, "after_set_username_confirm_click");
+      await page.waitForTimeout(2000).catch(() => {});
       return true;
     }
 
@@ -448,11 +448,11 @@ async function verifyNewUsernameOnTikTok(
   const trustPostConfirm = Boolean(opts?.confirmModalWasClicked);
   renameLog("verify_step_1_check_current_url", { url: page.url(), expectedHandle: target, trustPostConfirm });
 
-  await renameSlowPause(page, "verify_before_profile_nav");
+  await page.waitForTimeout(1000).catch(() => {});
   const profileUrl = `https://www.tiktok.com/@${encodeURIComponent(target)}`;
   renameLog("verify_step_2_goto_profile", { profileUrl });
   await page.goto(profileUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await renameSlowPause(page, "verify_after_profile_nav");
+  await page.waitForTimeout(2000).catch(() => {});
   await maybeScreenshot(page, "after-verify-goto");
 
   const finalUrl = page.url().toLowerCase();
@@ -585,9 +585,9 @@ export async function renameTikTokUsername(opts: {
       return { ok: true, verified: true, appliedCandidate: firstCandidate, triedUnavailable };
     }
 
-    await renameSlowPause(page, "after_initial_goto");
+    await page.waitForTimeout(1500).catch(() => {});
     await humanScroll(page);
-    await renameSlowPause(page, "after_scroll_on_profile");
+    await page.waitForTimeout(1000).catch(() => {});
     await maybeScreenshot(page, "01-profile-loaded");
 
     const editProfile = await waitForEditProfile(page);
@@ -599,7 +599,7 @@ export async function renameTikTokUsername(opts: {
 
     renameLog("click_edit_profile");
     await editProfile.click({ force: true });
-    await renameSlowPause(page, "after_edit_profile_click");
+    await page.waitForTimeout(2000).catch(() => {});
     await maybeScreenshot(page, "03-after-edit-profile");
 
     const usernameInputCandidates = [
@@ -626,7 +626,7 @@ export async function renameTikTokUsername(opts: {
       if (await usernameRow.isVisible({ timeout: 4000 }).catch(() => false)) {
         renameLog("click_username_row");
         await usernameRow.click({ force: true }).catch(() => {});
-        await renameSlowPause(page, "after_username_row_click");
+        await page.waitForTimeout(1500).catch(() => {});
         for (let i = 0; i < usernameInputCandidates.length; i++) {
           const el = usernameInputCandidates[i].first();
           if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
