@@ -52,6 +52,7 @@ export default function CampaignPage() {
   const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showCampaigns, setShowCampaigns] = useState(false);
   const addVideosInputRef = useRef<HTMLInputElement>(null);
 
   const fetchProgress = useCallback(async () => {
@@ -61,9 +62,29 @@ export default function CampaignPage() {
     } catch {}
   }, []);
 
+  const stopCampaign = async (uploadId: string) => {
+    if (!confirm("Stop this campaign?")) return;
+    const r = await fetch("/api/campaign/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploadId }),
+    });
+    if (r.ok) fetchProgress();
+  };
+
+  const stopAllCampaigns = async () => {
+    if (!confirm(`Stop all ${activeCampaigns.length} active campaigns?`)) return;
+    const r = await fetch("/api/campaign/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stopAll: true }),
+    });
+    if (r.ok) fetchProgress();
+  };
+
   useEffect(() => {
     fetchProgress();
-    const iv = setInterval(fetchProgress, 5000);
+    const iv = setInterval(fetchProgress, 30000);
     return () => clearInterval(iv);
   }, [fetchProgress]);
 
@@ -196,8 +217,33 @@ export default function CampaignPage() {
 
       {activeCampaigns.length > 0 && (
         <div className="mb-8 space-y-4">
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Active campaigns</h2>
-          {activeCampaigns.map((c) => {
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCampaigns((v) => !v)}
+              className="flex flex-1 items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-left transition hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/60"
+            >
+              <span className="text-lg font-bold text-zinc-900 dark:text-white">
+                Active campaigns
+                <span className="ml-2 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-violet-600 px-1.5 text-[0.65rem] font-bold leading-none text-white">
+                  {activeCampaigns.length}
+                </span>
+              </span>
+              <span className={`text-sm text-violet-600 transition-transform dark:text-violet-400 ${showCampaigns ? "rotate-180" : ""}`}>
+                ▼
+              </span>
+            </button>
+            {showCampaigns && (
+              <button
+                type="button"
+                onClick={stopAllCampaigns}
+                className="shrink-0 rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white shadow transition hover:bg-red-700"
+              >
+                Stop all
+              </button>
+            )}
+          </div>
+          {showCampaigns && activeCampaigns.map((c) => {
             const { jobs } = c;
             const done = jobs.success + jobs.failed;
             const total = jobs.total || 1;
@@ -226,9 +272,18 @@ export default function CampaignPage() {
                       {" · "}Parallelism {c.parallelism}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800 dark:bg-violet-950 dark:text-violet-300">
-                    {c.status}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                      {c.status}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => stopCampaign(c.uploadId)}
+                      className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700 transition hover:bg-red-600 hover:text-white dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-600 dark:hover:text-white"
+                    >
+                      Stop
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-3">
@@ -298,6 +353,8 @@ export default function CampaignPage() {
           })}
         </div>
       )}
+
+
 
       <form onSubmit={submit} className="space-y-8">
         <section className="rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-6 shadow-lg dark:border-zinc-800">
@@ -407,7 +464,24 @@ export default function CampaignPage() {
         </section>
 
         <section className="rounded-2xl border border-zinc-200/90 bg-[var(--card)] p-6 shadow-lg dark:border-zinc-800">
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Accounts (order = priority)</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Accounts (order = priority)</h2>
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-violet-600 dark:text-violet-400">
+              <input
+                type="checkbox"
+                checked={accounts.length > 0 && accounts.filter((a) => a.hasSession !== false).every((a) => selected.has(a.id))}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelected(new Set(accounts.filter((a) => a.hasSession !== false).map((a) => a.id)));
+                  } else {
+                    setSelected(new Set());
+                  }
+                }}
+                className="h-4 w-4 rounded"
+              />
+              Select all ({accounts.filter((a) => a.hasSession !== false).length})
+            </label>
+          </div>
           <div className="mt-4 max-h-64 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
             <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {accounts.map((a) => (
@@ -420,7 +494,7 @@ export default function CampaignPage() {
                       onChange={() => toggle(a.id)}
                       className="h-4 w-4 rounded"
                     />
-                    <span className="font-medium text-zinc-900 dark:text-white">{a.username}</span>
+                    <span className={`font-medium ${a.hasSession === false ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-900 dark:text-white"}`}>{a.username}</span>
                   </label>
                 </li>
               ))}

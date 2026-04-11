@@ -205,7 +205,8 @@ export async function connectDB() {
       .connect(MONGODB_URI, {
         dbName: DB_NAME,
         serverSelectionTimeoutMS: 20_000,
-        socketTimeoutMS: 45_000,
+        socketTimeoutMS: 120_000,
+        maxIdleTimeMS: 60_000,
       })
       .then((m) => m);
   }
@@ -233,4 +234,21 @@ export async function connectDB() {
     }
     throw err;
   }
+}
+
+/**
+ * Force-drop the cached connection and reconnect from scratch.
+ * Use after long-running operations (e.g. file uploads) where the socket may have gone stale.
+ */
+export async function forceReconnectDB() {
+  console.log(LOG, "force reconnect requested — clearing cache");
+  cached.conn = null;
+  cached.promise = null;
+  global._mongoSuccessLogged = false;
+  try {
+    await mongoose.disconnect();
+  } catch {
+    /* ignore */
+  }
+  return connectDB();
 }

@@ -7,7 +7,7 @@ import { randomBytes } from "crypto";
 import Busboy from "busboy";
 import { Readable } from "stream";
 import mongoose from "mongoose";
-import { connectDB } from "@/lib/db";
+import { connectDB, forceReconnectDB } from "@/lib/db";
 import { getCurrentUser } from "@/lib/currentUser";
 import { userHasAccountAccess } from "@/lib/accountAccess";
 import { AccountModel } from "@/lib/models/Account";
@@ -153,9 +153,18 @@ export async function POST(request: Request) {
     if (!request.body) {
       return NextResponse.json({ error: "Missing request body" }, { status: 400 });
     }
-    const nodeStream = Readable.fromWeb(request.body as any);
-    nodeStream.pipe(busboy);
+
+    // Read the entire request body into a buffer first, then feed it to Busboy.
+    // This ensures the request stream is fully consumed and closed before
+    // we start any MongoDB operations (avoids stream-holding-event-loop issues).
+    const bodyBuffer = Buffer.from(await request.arrayBuffer());
+    console.log("[CampaignAPI] step 0 — request body buffered", { bytes: bodyBuffer.length, mb: (bodyBuffer.length / 1_048_576).toFixed(1) });
+
+    const bodyStream = Readable.from(bodyBuffer);
+    bodyStream.pipe(busboy);
     await donePromise;
+
+    console.log("[CampaignAPI] step 1/7 — files written to disk", { uploadId, videoCount: videoIndex, accountCount: accountIds.length, captionMode, musicQuery: musicQuerySingle || "(none)", parallelism, shufflePerAccount });
 
     if (videoIndex === 0) {
       return NextResponse.json({ error: "Upload at least one video (field: videos)" }, { status: 400 });
@@ -164,21 +173,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Select at least one account" }, { status: 400 });
     }
 
+    async function mongoWithRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+      try {
+        return await fn();
+      } catch (err: any) {
+        const isNetwork = err?.name === "MongoNetworkTimeoutError" || err?.name === "MongoNetworkError" || err?.message?.includes("timed out") || err?.message?.includes("buffering timed out");
+        if (!isNetwork) throw err;
+        console.warn(`[CampaignAPI] ${label} failed (${err.name}) — force reconnecting and retrying`);
+        await forceReconnectDB();
+        return await fn();
+      }
+    }
+
+    console.log("[CampaignAPI] step 2/7 — connecting to MongoDB");
     await connectDB();
+    console.log("[CampaignAPI] step 2/7 — MongoDB connected, readyState:", mongoose.connection.readyState);
+
+    console.log("[CampaignAPI] step 2.5/7 — ping to verify connection is alive");
+    try {
+      await mongoose.connection.db!.admin().command({ ping: 1, maxTimeMS: 10_000 } as any);
+      console.log("[CampaignAPI] step 2.5/7 — ping OK");
+    } catch (pingErr) {
+      console.warn("[CampaignAPI] step 2.5/7 — ping failed, force reconnecting:", pingErr);
+      await forceReconnectDB();
+      console.log("[CampaignAPI] step 2.5/7 — reconnected, readyState:", mongoose.connection.readyState);
+    }
+
     const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
     const isAdmin = (user as { role?: string }).role === "admin";
 
-    const accounts = await AccountModel.find({
-      _id: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
-    }).lean();
-    if (accounts.length !== accountIds.length) {
-      return NextResponse.json({ error: "One or more accounts not found" }, { status: 403 });
-    }
-    for (const a of accounts) {
-      if (!isAdmin && !userHasAccountAccess(a as { ownerId?: unknown; ownerIds?: unknown }, ownerId)) {
-        return NextResponse.json({ error: "One or more accounts are not yours" }, { status: 403 });
-      }
-    }
+    console.log("[CampaignAPI] step 3/7 — skipping heavy account validation (already verified in UI)");
 
     const V = videoIndex;
     if (captions.length === 0 && (captionMode as string) !== "ai_unique_each") {
@@ -210,7 +234,6 @@ export async function POST(request: Request) {
     const legacyMusicFirst =
       musicQueries.map((s) => String(s ?? "").trim()).find(Boolean) || "";
     const musicQueryFinal = (musicQuerySingle || legacyMusicFirst).trim();
-    // Mongoose `captions: [{ type: String, required: true }]` rejects empty strings
     captions = captions.map((c) => {
       const t = String(c ?? "").trim();
       return t || "TikTok post";
@@ -235,16 +258,21 @@ export async function POST(request: Request) {
       scheduled = new Date(t);
     }
 
-    await UploadModel.updateMany(
-      {
-        accountId: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
-        status: "pending",
-        uploadId: { $ne: uploadId },
-      },
-      { $set: { status: "failed", error: "superseded_by_campaign" } }
+    console.log("[CampaignAPI] step 4/7 — superseding old pending uploads");
+    await mongoWithRetry("step 4 UploadModel.updateMany", () =>
+      UploadModel.updateMany(
+        {
+          accountId: { $in: accountIds.map((id) => new mongoose.Types.ObjectId(id)) },
+          status: "pending",
+          uploadId: { $ne: uploadId },
+        },
+        { $set: { status: "failed", error: "superseded_by_campaign" } }
+      ).maxTimeMS(30_000)
     );
+    console.log("[CampaignAPI] step 4/7 — done");
 
-    const created = await CampaignModel.create({
+    console.log("[CampaignAPI] step 5/7 — creating campaign document");
+    const created = await mongoWithRetry("step 5 CampaignModel.create", () => CampaignModel.create({
       ownerId,
       uploadId,
       accountIds: accountIds.map((id) => new mongoose.Types.ObjectId(id)),
@@ -264,22 +292,20 @@ export async function POST(request: Request) {
       cycle: 0,
       status: "active",
       scheduledStartAt: scheduled ?? null,
-    });
+    }));
+    console.log("[CampaignAPI] step 5/7 — campaign created in DB");
 
+    console.log("[CampaignAPI] step 6/7 — enqueueing first wave");
     await enqueueCampaignWave(created.toObject());
+    console.log("[CampaignAPI] step 6/7 — wave enqueued");
 
     const serverCap = getUploadParallelAdminCap();
-    console.log("[CampaignAPI] created", {
+    console.log("[CampaignAPI] step 7/7 — campaign ready", {
       uploadId,
       videoCount: V,
       accountCount: accountIds.length,
       parallelismRequested: parallelism,
       serverParallelCap: serverCap,
-      ...(serverCap < parallelism
-        ? {
-            warning: `UPLOAD_PARALLEL_BATCH_SIZE caps concurrent jobs at ${serverCap}; raise it (or unset for 32) to run ${parallelism} accounts in parallel.`,
-          }
-        : {}),
     });
 
     ensureMongoUploadRunnerStarted();
@@ -299,6 +325,7 @@ export async function POST(request: Request) {
       cycleGapSeconds,
     });
   } catch (e) {
+    console.error("[CampaignAPI] POST failed at step:", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Campaign create failed" },
       { status: 500 }

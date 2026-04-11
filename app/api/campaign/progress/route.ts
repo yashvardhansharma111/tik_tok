@@ -17,6 +17,7 @@ export async function GET() {
 
   const filter = isAdmin ? { status: { $in: ["active", "paused"] } } : { ownerId, status: { $in: ["active", "paused"] } };
   const campaigns = await CampaignModel.find(filter)
+    .select("uploadId status accountIds videoRelPaths parallelism captionMode musicQuery repeatForever maxCycles cycle cycleGapSeconds waveStartAccountIndex accountsFinishedInWave createdAt")
     .sort({ createdAt: -1 })
     .limit(20)
     .lean();
