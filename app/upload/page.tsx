@@ -8,7 +8,7 @@ import { AccountsListExplain } from "@/components/AccountsListExplain";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
 
-type Account = { id: string; username: string; hasSession?: boolean };
+type Account = { id: string; username: string; hasSession?: boolean; status?: string };
 
 type AccountQuota = {
   linkedCount: number;
@@ -60,11 +60,14 @@ export default function UploadPage() {
       if (res.ok) {
         const list = data.accounts ?? [];
         setAccounts(
-          list.map((a: any) => ({
-            id: a.id,
-            username: a.username,
-            hasSession: a.hasSession,
-          }))
+          list
+            .filter((a: any) => a.status !== "expired")
+            .map((a: any) => ({
+              id: a.id,
+              username: a.username,
+              hasSession: a.hasSession,
+              status: a.status,
+            }))
         );
         if (typeof data.totalInDatabase === "number" && (data.listScope === "owner_only" || data.listScope === "all_in_database")) {
           setAccountsListInfo({ totalInDatabase: data.totalInDatabase, listScope: data.listScope });

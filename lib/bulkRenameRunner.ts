@@ -325,7 +325,12 @@ async function isHandleFreeForAccount(
 
 async function saveAccountUsername(accountId: mongoose.Types.ObjectId, newUsername: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    await AccountModel.updateOne({ _id: accountId }, { $set: { username: newUsername } });
+    const existing = await AccountModel.findById(accountId).select({ username: 1, previousUsername: 1 }).lean() as any;
+    const prevName = existing?.previousUsername || existing?.username || "";
+    await AccountModel.updateOne(
+      { _id: accountId },
+      { $set: { username: newUsername, ...(prevName ? { previousUsername: prevName } : {}) } }
+    );
     return { ok: true };
   } catch (e: any) {
     if (e?.code === 11000) {

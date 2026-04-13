@@ -13,8 +13,14 @@ export async function GET() {
   const admin = await requireAdmin();
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  console.log("[admin/accounts] loading...");
   await connectDB();
-  const accounts = await AccountModel.find({}).sort({ username: 1 }).lean();
+  const accounts = await AccountModel.find({})
+    .select("username ownerId ownerIds")
+    .sort({ username: 1 })
+    .lean()
+    .maxTimeMS(30_000);
+  console.log("[admin/accounts] found", accounts.length, "accounts");
 
   const allOwnerIdStrs = new Set<string>();
   for (const a of accounts) {
@@ -32,11 +38,12 @@ export async function GET() {
       : [];
   const emailById = new Map(users.map((u) => [String((u as any)._id), (u as any).email as string]));
 
-  // Build rename info per account: map accountId → { originalUsername, appliedUsername, renamedAt }
+  console.log("[admin/accounts] loading rename jobs...");
   const renameJobs = await RenameJobModel.find(
     { "items.status": "done" },
     { items: 1, updatedAt: 1, ownerId: 1 }
-  ).lean();
+  ).lean().maxTimeMS(30_000);
+  console.log("[admin/accounts] found", renameJobs.length, "rename jobs");
 
   const renameByAccountId = new Map<
     string,
@@ -80,5 +87,6 @@ export async function GET() {
     return a.username.localeCompare(b.username);
   });
 
+  console.log("[admin/accounts] returning", rows.length, "rows");
   return NextResponse.json(rows);
 }

@@ -28,7 +28,7 @@ import {
   typeTextLikeHuman,
 } from "@/lib/humanBehavior";
 
-const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en";
+const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=webapp";
 
 /**
  * Selector strategies used by this worker (update when TikTok Studio DOM changes).
@@ -255,6 +255,29 @@ type FlowContext = {
   shot: (page: Page, fileName: string) => Promise<void>;
   pauseIfDebug: (page: Page, reason: string) => Promise<void>;
 };
+
+type BrowserContext = import("playwright").BrowserContext;
+
+/**
+ * Mask Playwright/automation signals so TikTok serves normal content
+ * (full sound catalog, no restricted features).
+ */
+async function applyStealthScripts(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+    // @ts-expect-error — chrome runtime stub
+    window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) };
+    Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+    Object.defineProperty(navigator, "plugins", {
+      get: () => [1, 2, 3, 4, 5],
+    });
+    const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+    window.navigator.permissions.query = (params: PermissionDescriptor) =>
+      params.name === "notifications"
+        ? Promise.resolve({ state: "denied", onchange: null } as PermissionStatus)
+        : origQuery(params);
+  });
+}
 
 /**
  * Structured timing: (1) area+phase (2) duration (3) why + knobs — always logged to console + flow.log.
@@ -3009,7 +3032,7 @@ export async function runUploadWithSession(
     }
     const activeBrowser = browser || localBrowser!;
     const userAgent =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     const resolvedProxy: PlaywrightProxyConfig | undefined =
       typeof proxy === "string"
@@ -3066,8 +3089,11 @@ export async function runUploadWithSession(
         context = await activeBrowser.newContext({
           storageState: tmpFile,
           userAgent,
+          locale: "en-US",
+          timezoneId: "America/New_York",
           ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
         });
+        await applyStealthScripts(context);
         await installSafeBandwidthRoutes(context);
       }
 

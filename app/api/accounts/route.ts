@@ -11,6 +11,7 @@ function mapAccount(a: any) {
   return {
     id: String(a._id),
     username: a.username,
+    previousUsername: a.previousUsername || "",
     proxy: a.proxy || "",
     status: a.status,
     lastUsedAt: a.lastUsedAt,
@@ -38,9 +39,13 @@ export async function GET(req: NextRequest) {
       : Math.min(ACCOUNTS_MAX_LIMIT, Math.max(1, parseInt(limitParam, 10) || ACCOUNTS_DEFAULT_LIMIT));
   const skip = (page - 1) * limit;
 
-  const filter = isAdmin ? {} : accountAccessibleByUser(ownerId);
-  const userFilter = accountAccessibleByUser(ownerId);
-  const [accounts, totalInDatabase, linkedCount] = await Promise.all([
+  const statusParam = sp.get("status");
+  const statusFilter: Record<string, unknown> =
+    statusParam === "active" || statusParam === "expired" ? { status: statusParam } : {};
+
+  const filter = { ...(isAdmin ? {} : accountAccessibleByUser(ownerId)), ...statusFilter };
+  const userFilter = { ...accountAccessibleByUser(ownerId), ...statusFilter };
+  const [accounts, totalInDatabase, linkedCount, filteredTotal] = await Promise.all([
     AccountModel.aggregate([
       { $match: filter },
       { $sort: { createdAt: -1 as const } },
@@ -49,6 +54,7 @@ export async function GET(req: NextRequest) {
       {
         $project: {
           username: 1,
+          previousUsername: 1,
           proxy: 1,
           status: 1,
           lastUsedAt: 1,
@@ -63,8 +69,13 @@ export async function GET(req: NextRequest) {
     ]),
     AccountModel.countDocuments({}),
     AccountModel.countDocuments(userFilter),
+    isAdmin && Object.keys(statusFilter).length > 0
+      ? AccountModel.countDocuments(statusFilter)
+      : Promise.resolve(null),
   ]);
-  const listTotal = isAdmin ? totalInDatabase : linkedCount;
+  const listTotal = isAdmin
+    ? (filteredTotal ?? totalInDatabase)
+    : linkedCount;
 
   const totalPages = Math.max(1, Math.ceil(listTotal / limit));
 

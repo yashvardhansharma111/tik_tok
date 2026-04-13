@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
 
-type Account = { id: string; username: string; hasSession?: boolean };
+type Account = { id: string; username: string; hasSession?: boolean; status?: string };
 
 type CampaignProgress = {
   uploadId: string;
@@ -113,11 +113,14 @@ export default function CampaignPage() {
       if (res.ok) {
         const list = data.accounts ?? [];
         setAccounts(
-          list.map((a: any) => ({
-            id: a.id,
-            username: a.username,
-            hasSession: a.hasSession,
-          }))
+          list
+            .filter((a: any) => a.status !== "expired")
+            .map((a: any) => ({
+              id: a.id,
+              username: a.username,
+              hasSession: a.hasSession,
+              status: a.status,
+            }))
         );
         logAccountsListLoaded(
           {

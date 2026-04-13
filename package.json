@@ -21,6 +21,7 @@
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.71.1",
     "busboy": "^1.6.0",
+    "dotenv": "^17.4.2",
     "ioredis": "^5.10.1",
     "jose": "^6.2.2",
     "jsonwebtoken": "^9.0.3",

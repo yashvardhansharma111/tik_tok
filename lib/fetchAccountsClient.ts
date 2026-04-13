@@ -8,6 +8,7 @@ const SELECTOR_CHUNK_LIMIT = 200;
 export type AccountsApiRow = {
   id: string;
   username: string;
+  previousUsername?: string;
   proxy?: string;
   status: string;
   lastUsedAt?: unknown;
@@ -27,10 +28,12 @@ export type AccountsApiPayload = {
   listScope: "owner_only" | "all_in_database";
 };
 
-function accountsUrl(page: number, limit: number): string {
+function accountsUrl(page: number, limit: number, status?: "active" | "expired"): string {
   const p = Math.max(1, page);
   const l = Math.min(ACCOUNTS_LIST_MAX_LIMIT, Math.max(1, limit));
-  return `/api/accounts?page=${p}&limit=${l}`;
+  let url = `/api/accounts?page=${p}&limit=${l}`;
+  if (status) url += `&status=${status}`;
+  return url;
 }
 
 /**
@@ -38,9 +41,10 @@ function accountsUrl(page: number, limit: number): string {
  */
 export async function fetchAccountsPage(
   page: number,
-  limit: number = ACCOUNTS_LIST_DEFAULT_LIMIT
+  limit: number = ACCOUNTS_LIST_DEFAULT_LIMIT,
+  status?: "active" | "expired"
 ): Promise<{ res: Response; data: AccountsApiPayload }> {
-  const res = await fetch(accountsUrl(page, limit));
+  const res = await fetch(accountsUrl(page, limit, status));
   const data = (await res.json()) as AccountsApiPayload;
   return { res, data };
 }
@@ -49,7 +53,7 @@ export async function fetchAccountsPage(
  * Every account visible to the current user, for checkboxes / multi-select.
  * Paginates on the client to avoid huge single responses.
  */
-export async function fetchAllAccountsForSelectors(): Promise<{
+export async function fetchAllAccountsForSelectors(status: "active" | "expired" | undefined = "active"): Promise<{
   res: Response;
   data: AccountsApiPayload & { accounts: AccountsApiRow[] };
 }> {
@@ -59,7 +63,7 @@ export async function fetchAllAccountsForSelectors(): Promise<{
   let lastData: AccountsApiPayload | null = null;
 
   while (true) {
-    const res = await fetch(accountsUrl(page, SELECTOR_CHUNK_LIMIT));
+    const res = await fetch(accountsUrl(page, SELECTOR_CHUNK_LIMIT, status));
     const data = (await res.json()) as AccountsApiPayload;
     lastRes = res;
     if (!res.ok) {

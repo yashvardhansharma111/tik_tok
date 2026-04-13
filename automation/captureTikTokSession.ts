@@ -3,7 +3,7 @@ import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes"
 import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
 
 const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 type ProxyConfig = { server: string; username?: string; password?: string };
 
@@ -42,7 +42,12 @@ export async function captureTikTokStorageState(proxy?: string): Promise<string>
     const resolvedProxy = buildProxy(proxy);
     const context = await browser.newContext({
       userAgent: UA,
+      locale: "en-US",
+      timezoneId: "America/New_York",
       ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => false });
     });
     await installSafeBandwidthRoutes(context);
     const page = await context.newPage();

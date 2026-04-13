@@ -180,13 +180,15 @@ export default function RenamePage() {
       return;
     }
     if (res.ok) {
-      const list: Account[] = (data.accounts ?? []).map((a) => ({
-        id: a.id,
-        username: a.username,
-        proxy: a.proxy ?? "",
-        status: a.status,
-        hasSession: Boolean(a.hasSession),
-      }));
+      const list: Account[] = (data.accounts ?? [])
+        .filter((a) => a.status !== "expired")
+        .map((a) => ({
+          id: a.id,
+          username: a.username,
+          proxy: a.proxy ?? "",
+          status: a.status,
+          hasSession: Boolean(a.hasSession),
+        }));
       setAccounts(list);
       logAccountsListLoaded(
         {
