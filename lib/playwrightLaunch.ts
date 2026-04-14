@@ -94,29 +94,14 @@ function resolveHeadless(): boolean {
   return false;
 }
 
-export function getChromiumLaunchOptions(purpose?: PlaywrightPurpose): LaunchOptions {
+export function getChromiumLaunchOptions(purpose?: PlaywrightPurpose, proxy?: { server: string; username?: string; password?: string }): LaunchOptions {
   const headless = resolveHeadless();
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined;
   const envChannel = process.env.PLAYWRIGHT_CHANNEL?.trim() as LaunchOptions["channel"] | undefined;
-  /**
-   * Playwright 1.49+ uses a separate `chromium-headless-shell` build when headless=true and channel is unset.
-   * That binary often crashes immediately in minimal containers (`Target page, context or browser has been closed`).
-   * Using channel `chromium` selects the full bundled Chromium and passes `--headless` instead — same as Playwright’s
-   * “new headless” / full-browser path and far more compatible on Linux production.
-   */
-  const useShell =
-    parseTruthy(process.env.PLAYWRIGHT_USE_HEADLESS_SHELL) === true;
-  /** Linux VPS/Docker: always use the full bundled Chromium (not chromium-headless-shell) unless shell is explicitly requested — the shell binary often fails with missing libnspr4.so / NSS on slim images. */
-  const linuxAutomationPreferFullChromium =
-    process.platform === "linux" &&
-    purpose === "automation" &&
-    !executablePath &&
-    !useShell;
-  const channel: LaunchOptions["channel"] | undefined =
-    envChannel ??
-    (linuxAutomationPreferFullChromium || (headless && !executablePath && !useShell)
-      ? ("chromium" as const)
-      : undefined);
+  // Bundled Chromium required: real Chrome (channel:'chrome') blocks Playwright's CDP proxy-auth injection
+  // causing ERR_PROXY_AUTH_UNSUPPORTED on every 407 challenge. Bundled Chromium allows it.
+  // Override with PLAYWRIGHT_CHANNEL env (e.g. PLAYWRIGHT_CHANNEL=chrome) only if proxy-less.
+  const channel: LaunchOptions['channel'] | undefined = envChannel ?? 'chromium';
 
   const linuxish = useLinuxStyleSandboxArgs();
   const opts: LaunchOptions = {
@@ -126,13 +111,14 @@ export function getChromiumLaunchOptions(purpose?: PlaywrightPurpose): LaunchOpt
     ...(linuxish ? { chromiumSandbox: false } : {}),
     ...(executablePath ? { executablePath } : {}),
     ...(channel ? { channel } : {}),
+    ...(proxy?.server ? { proxy } : {}),
   };
 
   return opts;
 }
 
-export async function launchChromium(purpose: PlaywrightPurpose = "automation"): Promise<Browser> {
-  const opts = getChromiumLaunchOptions(purpose);
+export async function launchChromium(purpose: PlaywrightPurpose = "automation", proxy?: { server: string; username?: string; password?: string }): Promise<Browser> {
+  const opts = getChromiumLaunchOptions(purpose, proxy);
   if (purpose === "interactive" && opts.headless) {
     console.warn(
       "[Playwright] PLAYWRIGHT_HEADLESS is enabled: TikTok login in this window often fails. Use a visible browser (unset PLAYWRIGHT_HEADLESS or set PLAYWRIGHT_HEADLESS=false), or paste storageState JSON on Accounts."

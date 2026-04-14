@@ -5,13 +5,16 @@
 import { launchChromium } from "../lib/playwrightLaunch";
 
 const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 (async () => {
   const browser = await launchChromium("interactive");
 
   const context = await browser.newContext({
     userAgent: UA,
+    locale: "en-US",
+    timezoneId: "America/New_York",
+    viewport: { width: 1366, height: 768 },
   });
 
   const page = await context.newPage();

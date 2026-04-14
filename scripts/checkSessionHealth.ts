@@ -20,8 +20,17 @@ const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "";
 const DB_NAME = process.env.MONGODB_DB || "tiktok_automation";
 const CHECK_URL = "https://www.tiktok.com/tiktokstudio/upload?from=webapp";
 const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 const PARALLEL = 15;
+
+let chromium: typeof import("playwright")["chromium"];
+const launchArgs: string[] = ["--disable-blink-features=AutomationControlled", "--disable-background-networking",
+  "--disable-component-update", "--disable-default-apps", "--disable-sync",
+  "--metrics-recording-only", "--no-first-run"];
+if (process.platform === "linux") {
+  launchArgs.push("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage");
+}
+
 
 type CheckResult = {
   id: string;
@@ -41,8 +50,11 @@ function readStdin(): Promise<string> {
   });
 }
 
+/**
+ * 1:1 proxy mapping — mirrors lib/proxyPlaywright.ts buildStickyProxyForAccount().
+ * Each account gets its own unique sticky session: <PROXY_USERNAME>-session-<accountId>
+ */
 function buildProxy(username: string, accountId: string, accountProxy?: string) {
-  const { createHash } = require("crypto");
   const server = (accountProxy?.trim()) || process.env.PROXY_SERVER || "";
   if (!server) return undefined;
 
@@ -50,35 +62,30 @@ function buildProxy(username: string, accountId: string, accountProxy?: string) 
   const passwordBase = process.env.PROXY_PASSWORD;
   if (!proxyUser || !passwordBase) return { server };
 
-  const slotCount = Math.max(0, Math.min(512, Number(process.env.PROXY_STICKY_SLOT_COUNT || 0)));
-  const rotateMinutes = Number(process.env.PROXY_ROTATE_MINUTES ?? 60);
-  const rotation = rotateMinutes > 0
-    ? `r${Math.floor(Date.now() / (Math.max(1, rotateMinutes) * 60_000))}`
-    : "";
+  const sessionKey = accountId && accountId.trim()
+    ? accountId.trim()
+    : username.replace(/[^a-zA-Z0-9_-]/g, "_");
 
-  let sessionKey: string;
-  if (slotCount >= 2 && accountId) {
-    const buf = createHash("sha256").update(accountId).digest();
-    const k = buf.readUInt32BE(0) % slotCount;
-    sessionKey = `slot${k}${rotation}`;
-  } else {
-    sessionKey = `${username.replace(/[^a-zA-Z0-9_-]/g, "_")}${rotation}`;
-  }
+  const proxyUsername = `${proxyUser}-session-${sessionKey}`;
+
+  process.stderr.write(
+    `[PROXY_DEBUG] accountId=${accountId} sessionId=${sessionKey} proxyUsername=${proxyUsername}\n`
+  );
 
   return {
     server,
-    username: `${proxyUser}-session-${sessionKey}-1`,
+    username: proxyUsername,
     password: passwordBase,
   };
 }
 
 async function checkOneAccount(
-  browser: any,
   account: { _id: string; username: string; session: string; proxy?: string; status: string }
 ): Promise<CheckResult> {
   const id = account._id;
   const tmpFile = path.join(os.tmpdir(), `hc-${id}-${Date.now()}.json`);
   let context: any;
+  let browser: any;
 
   try {
     if (!account.session || account.session.length < 10) {
@@ -88,12 +95,20 @@ async function checkOneAccount(
     fs.writeFileSync(tmpFile, account.session, "utf-8");
     const proxy = buildProxy(account.username, id, account.proxy);
 
+    // Proxy in browser launch (not context) -- required for IPRoyal auth.
+    browser = await chromium.launch({
+      headless: false,
+      channel: 'chromium',
+      args: launchArgs,
+      ...(proxy?.server ? { proxy } : {}),
+    });
+
     context = await browser.newContext({
       storageState: tmpFile,
       userAgent: UA,
       locale: "en-US",
       timezoneId: "America/New_York",
-      ...(proxy?.server ? { proxy } : {}),
+      viewport: { width: 1366, height: 768 },
     });
 
     await context.addInitScript(() => {
@@ -115,6 +130,7 @@ async function checkOneAccount(
     return { id, username: account.username, previousStatus: account.status, currentStatus: "expired", changed: account.status !== "expired" };
   } finally {
     await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
     try { fs.unlinkSync(tmpFile); } catch {}
   }
 }
@@ -167,21 +183,7 @@ async function main() {
 
   process.stderr.write(`[check-health] Found ${accountMetas.length} accounts in DB\n`);
 
-  const { chromium } = await import("playwright");
-
-  const launchArgs = ["--disable-blink-features=AutomationControlled", "--disable-background-networking",
-    "--disable-component-update", "--disable-default-apps", "--disable-sync",
-    "--metrics-recording-only", "--no-first-run"];
-  if (process.platform === "linux") {
-    launchArgs.push("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage");
-  }
-
-  const browser = await chromium.launch({
-    headless: false,
-    args: launchArgs,
-  });
-
-  process.stderr.write(`[check-health] Browser launched, checking in batches of ${PARALLEL}\n`);
+  ({ chromium } = await import("playwright"));
 
   const results: CheckResult[] = [];
 
@@ -197,7 +199,7 @@ async function main() {
 
     const batchResults = await Promise.all(
       batchWithSessions.map((acc: any) =>
-        checkOneAccount(browser, {
+        checkOneAccount({
           _id: String(acc._id),
           username: acc.username,
           session: acc.session,
@@ -209,8 +211,6 @@ async function main() {
     results.push(...batchResults);
     process.stderr.write(`[check-health] Progress: ${Math.min(i + PARALLEL, accountMetas.length)}/${accountMetas.length}\n`);
   }
-
-  await browser.close().catch(() => {});
 
   const bulkOps = results
     .filter((r) => r.changed)

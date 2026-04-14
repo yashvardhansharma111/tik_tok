@@ -1,21 +1,22 @@
 /**
- * Shared proxy config for Playwright (upload + rename + capture).
+ * Shared proxy config for Playwright (upload + rename + capture + health check).
  *
- * Why proxy traffic is high (not a bug by itself):
- * - Playwright routes **all** browser traffic (HTML, JS, images, video chunks, WebSockets) through
- *   `server` + sticky `username`/`password` when set — same as a full desktop session on TikTok Studio.
- * - **Parallel uploads** (N browser contexts) ≈ N concurrent sessions × normal page weight.
- * - Retries, sound search, and long flows add more requests. Residential/datacenter proxies bill by GB.
+ * **1:1 mapping:** every TikTok account gets its own unique sticky session.
+ * The session key is the account's MongoDB `_id`, ensuring:
+ *   - No two accounts ever share the same proxy IP
+ *   - The same account always gets the same IP (until the provider rotates)
+ *   - Login, upload, rename, and health checks all use the same session
  *
- * **Shared sticky slots (`PROXY_STICKY_SLOT_COUNT`):** map many accounts onto a **fixed number** of
- * session password suffixes (`slot0`…`slotN-1`) so **2–3+ accounts** can share one proxy identity before
- * you exhaust the slot space — **not** a new session string per account on every job.
+ * Proxy username format (IPRoyal):
+ *   <PROXY_USERNAME><PROXY_SESSION_SEP><sessionKey>
+ * Example (default sep "_session-"):
+ *   tDcJl2f7pYXAjziS_session-69c35cb55c2f87582236a6ed
  *
- * **IP rotation (`PROXY_ROTATE_MINUTES`):** rotate proxy IPs periodically so that heavy usage
- * doesn't burn a fixed set of IPs. The rotation window is appended to the session key so the
- * proxy provider assigns fresh IPs each period. Default: 60 minutes.
+ * Env controls:
+ *   PROXY_STICKY_SESSION=false  — disable session appending entirely (plain username only)
+ *   PROXY_SESSION_SEP=_session- — separator between username and session key (default: _session-)
+ *                                 try "_session=" if "_session-" fails with your provider
  */
-import { createHash } from "crypto";
 
 export type PlaywrightProxyConfig = {
   server: string;
@@ -23,39 +24,19 @@ export type PlaywrightProxyConfig = {
   password?: string;
 };
 
-function safeUserSegment(s: string): string {
-  return s.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-function slotFromAccountId(accountId: string, slots: number): number {
-  const buf = createHash("sha256").update(accountId).digest();
-  return buf.readUInt32BE(0) % slots;
-}
-
 /**
- * Time-based rotation window. Changes the session key every N minutes
- * so the proxy provider assigns a fresh IP.
- */
-function rotationWindow(): string {
-  const minutes = Math.max(1, Number(process.env.PROXY_ROTATE_MINUTES || 60));
-  const epoch = Math.floor(Date.now() / (minutes * 60_000));
-  return `r${epoch}`;
-}
-
-/**
- * Sticky proxy for an account with periodic IP rotation.
+ * Build a sticky proxy config for a specific account.
  *
- * - **Default (`PROXY_STICKY_SLOT_COUNT` unset or 0):** one session key per **username** (legacy).
- * - **Shared slots (`PROXY_STICKY_SLOT_COUNT` ≥ 2):** session key is `slot<K>` where `K = hash(accountId) % N`.
- *   Set **N ≈ ceil(account_count / desired_accounts_per_proxy)** (e.g. 30 accounts, ~3 per proxy → **N=10**).
- * - **Rotation (`PROXY_ROTATE_MINUTES`):** IPs rotate every N minutes (default 60). Set 0 to disable rotation.
- *
- * `attemptNumber` appends `-1`, `-2` for retries (provider sticky rotation).
+ * - `accountId` is **required** for 1:1 mapping. If missing, falls back to
+ *   sanitized `accountUsername` (legacy callers that haven't been updated).
+ * - `attemptNumber` is accepted for API compatibility but **ignored** --
+ *   retries use the same session/IP to avoid detection.
+ * - `accountProxy` overrides `PROXY_SERVER` if the account has a per-account proxy URL.
  */
 export function buildStickyProxyForAccount(
   accountUsername: string,
   accountProxy?: string,
-  attemptNumber = 1,
+  _attemptNumber = 1,
   accountId?: string
 ): PlaywrightProxyConfig | undefined {
   const server =
@@ -68,23 +49,33 @@ export function buildStickyProxyForAccount(
     return { server };
   }
 
-  const slotCount = Math.max(0, Math.min(512, Number(process.env.PROXY_STICKY_SLOT_COUNT || 0)));
-  const suffix = attemptNumber ? `-${attemptNumber}` : "";
+  // PROXY_STICKY_SESSION=false -> use plain username, no session suffix (for testing / unsupported providers)
+  const stickyEnabled = process.env.PROXY_STICKY_SESSION !== "false" && process.env.PROXY_STICKY_SESSION !== "0";
 
-  const rotateMinutes = Number(process.env.PROXY_ROTATE_MINUTES ?? 60);
-  const rotation = rotateMinutes > 0 ? rotationWindow() : "";
-
-  let sessionKey: string;
-  if (slotCount >= 2 && accountId && accountId.trim()) {
-    const k = slotFromAccountId(accountId.trim(), slotCount);
-    sessionKey = `slot${k}${rotation}`;
-  } else {
-    sessionKey = `${safeUserSegment(accountUsername)}${rotation}`;
+  if (!stickyEnabled) {
+    console.log(
+      `[PROXY_DEBUG] sticky=OFF accountId=${accountId ?? "N/A"} proxyUsername=${username}`
+    );
+    return { server, username, password: passwordBase };
   }
+
+  const sessionKey = accountId && accountId.trim()
+    ? accountId.trim()
+    : accountUsername.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  // PROXY_SESSION_SEP controls the separator (default: _session-)
+  // Try PROXY_SESSION_SEP="_session=" if "_session-" causes auth errors with your provider
+  const sep = process.env.PROXY_SESSION_SEP ?? "_session-";
+
+  const proxyUsername = `${username}${sep}${sessionKey}`;
+
+  console.log(
+    `[PROXY_DEBUG] sticky=ON sep="${sep}" accountId=${accountId ?? "N/A"} sessionId=${sessionKey} proxyUsername=${proxyUsername}`
+  );
 
   return {
     server,
-    username: `${username}-session-${sessionKey}${suffix}`,
+    username: proxyUsername,
     password: passwordBase,
   };
 }

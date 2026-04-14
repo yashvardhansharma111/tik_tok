@@ -3025,14 +3025,8 @@ export async function runUploadWithSession(
   }
 
   try {
-    if (browser) {
-      localBrowser = undefined;
-    } else {
-      localBrowser = await launchChromium("automation");
-    }
-    const activeBrowser = browser || localBrowser!;
     const userAgent =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
     const resolvedProxy: PlaywrightProxyConfig | undefined =
       typeof proxy === "string"
@@ -3042,6 +3036,13 @@ export async function runUploadWithSession(
         : proxy?.server
           ? proxy
           : undefined;
+
+    // Proxy goes in browser launch (not context) — required for IPRoyal auth.
+    // Always create a dedicated browser when proxy is set so each account gets its own proxy session.
+    if (!browser || resolvedProxy) {
+      localBrowser = await launchChromium("automation", resolvedProxy ?? undefined);
+    }
+    const activeBrowser = localBrowser || browser!;
 
     reuseEnabled =
       !!browser &&
@@ -3091,7 +3092,7 @@ export async function runUploadWithSession(
           userAgent,
           locale: "en-US",
           timezoneId: "America/New_York",
-          ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+          viewport: { width: 1366, height: 768 },
         });
         await applyStealthScripts(context);
         await installSafeBandwidthRoutes(context);

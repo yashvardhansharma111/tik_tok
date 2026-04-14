@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\('fs'\\); const src=fs.readFileSync\\('d:/tik_tok/lib/playwrightLaunch.ts','utf8'\\); const line=src.split\\('\\\\n'\\)[101]; console.log\\(JSON.stringify\\(line\\)\\); const codes=[...line].map\\(c=>c.charCodeAt\\(0\\)\\); console.log\\(codes.join\\(','\\)\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}

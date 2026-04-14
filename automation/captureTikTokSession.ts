@@ -1,50 +1,72 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
 import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
 import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
+import { buildStickyProxyForAccount, type PlaywrightProxyConfig } from "@/lib/proxyPlaywright";
 
 const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
-type ProxyConfig = { server: string; username?: string; password?: string };
-
-function buildProxy(proxy?: string): ProxyConfig | undefined {
-  const raw = (proxy && proxy.trim()) || "";
-  if (raw) {
-    try {
-      // Support http://user:pass@host:port
-      const u = new URL(raw);
-      const server = `${u.protocol}//${u.host}`;
-      const username = u.username ? decodeURIComponent(u.username) : undefined;
-      const password = u.password ? decodeURIComponent(u.password) : undefined;
-      if (username || password) return { server, username, password };
-      return { server: raw };
-    } catch {
-      // Treat as plain server string
-      return { server: raw };
-    }
+/**
+ * Parse an inline proxy URL (e.g. http://user:pass@host:port) into a PlaywrightProxyConfig.
+ * Only used when the account has a per-account proxy URL override.
+ */
+function parseInlineProxyUrl(raw: string): PlaywrightProxyConfig | undefined {
+  if (!raw.trim()) return undefined;
+  try {
+    const u = new URL(raw);
+    const server = `${u.protocol}//${u.host}`;
+    const username = u.username ? decodeURIComponent(u.username) : undefined;
+    const password = u.password ? decodeURIComponent(u.password) : undefined;
+    if (username || password) return { server, username, password };
+    return { server: raw };
+  } catch {
+    return { server: raw };
   }
-
-  const server = process.env.PROXY_SERVER?.trim();
-  const username = process.env.PROXY_USERNAME?.trim();
-  const password = process.env.PROXY_PASSWORD?.trim();
-  if (!server) return undefined;
-  if (username && password) return { server, username, password };
-  return { server };
 }
 
 /**
  * Opens a headed browser on TikTok login. Complete login in the window; when you leave
  * the login flow (e.g. land on For You / home), storage state is captured.
+ *
+ * @param accountId   MongoDB _id -- used for 1:1 proxy session mapping
+ * @param username    TikTok username -- fallback if accountId unavailable
+ * @param proxy       Optional per-account proxy URL override
  */
-export async function captureTikTokStorageState(proxy?: string): Promise<string> {
-  const browser = await launchChromium("interactive");
+export async function captureTikTokStorageState(
+  proxy?: string,
+  accountId?: string,
+  username?: string
+): Promise<string> {
+  // Resolve proxy BEFORE launching -- proxy must be at browser-launch level for IPRoyal auth.
+  let resolvedProxy: PlaywrightProxyConfig | undefined;
+
+  if (proxy && proxy.trim()) {
+    resolvedProxy = parseInlineProxyUrl(proxy);
+  } else if (accountId || username) {
+    resolvedProxy = buildStickyProxyForAccount(
+      username || "unknown",
+      undefined,
+      1,
+      accountId
+    );
+  } else {
+    const server = process.env.PROXY_SERVER?.trim();
+    const proxyUser = process.env.PROXY_USERNAME?.trim();
+    const proxyPass = process.env.PROXY_PASSWORD?.trim();
+    if (server && proxyUser && proxyPass) {
+      resolvedProxy = { server, username: proxyUser, password: proxyPass };
+    } else if (server) {
+      resolvedProxy = { server };
+    }
+  }
+
+  const browser = await launchChromium("interactive", resolvedProxy);
   try {
-    const resolvedProxy = buildProxy(proxy);
     const context = await browser.newContext({
       userAgent: UA,
       locale: "en-US",
       timezoneId: "America/New_York",
-      ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+      viewport: { width: 1366, height: 768 },
     });
     await context.addInitScript(() => {
       Object.defineProperty(navigator, "webdriver", { get: () => false });

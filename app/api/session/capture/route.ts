@@ -76,7 +76,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const sessionJson = await captureTikTokStorageState(proxy || undefined);
+    const sessionJson = await captureTikTokStorageState(proxy || undefined, accountId || undefined, username || undefined);
     const filter = accountId ? { _id: accountId } : { username };
     const update: Record<string, unknown> = {
       $set: {
