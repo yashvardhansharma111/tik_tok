@@ -100,9 +100,20 @@ export async function uploadViaAdsPower(
     }
     const context = contexts[0];
 
-    // Use existing page or create new
-    const existingPages = context.pages();
-    const page = existingPages.length > 0 ? existingPages[0] : await context.newPage();
+    // Close ALL leftover tabs and open a completely fresh one.
+    // AdsPower preserves tabs between start/stop — the first tab often has stale
+    // TikTok Studio state (Sounds panel open, previous upload UI visible) which
+    // blocks clicks on the caption box. A fresh page guarantees clean state.
+    for (const p of context.pages()) {
+      await p.close().catch(() => {});
+    }
+    const page = await context.newPage();
+
+    // Force desktop viewport — TikTok Studio's upload UI breaks on mobile-sized
+    // viewports (caption editor gets overlaid, buttons shift off-screen).
+    // AdsPower profiles set to iPhone/mobile emulation would otherwise use a tiny
+    // viewport that the upload worker can't interact with.
+    await page.setViewportSize({ width: 1366, height: 768 });
 
     // Step 3: navigate to TikTok Studio
     log("navigating to TikTok Studio");

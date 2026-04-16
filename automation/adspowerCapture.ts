@@ -96,7 +96,7 @@ export async function createAdsPowerProfile(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      group_id: "0",
+      group_id: process.env.ADSPOWER_GROUP_ID || "0",
       name: profileName || undefined,
       user_proxy_config: {
         proxy_soft: "other",
@@ -248,8 +248,20 @@ export async function captureViaAdsPower(
         profileId = created.profileId;
         adspowerProfileId = profileId;
       } else {
-        // Ensure the proxy is up to date on the existing profile
-        await updateAdsPowerProxy(profileId, proxy);
+        // Ensure the proxy is up to date on the existing profile.
+        // If the profile was deleted in AdsPower, the update will fail —
+        // catch it and create a fresh profile instead.
+        try {
+          await updateAdsPowerProxy(profileId, proxy);
+        } catch (updateErr) {
+          warn("existing profile not found in AdsPower — creating fresh one", {
+            staleProfileId: profileId,
+            error: (updateErr as Error).message,
+          });
+          const created = await createAdsPowerProfile(proxy, options.tiktokUsername || accountId);
+          profileId = created.profileId;
+          adspowerProfileId = profileId;
+        }
       }
 
       // Step 2: start the browser
@@ -264,7 +276,11 @@ export async function captureViaAdsPower(
         throw new Error("AdsPower browser has no contexts after start");
       }
       const context = contexts[0];
+      // Close leftover tabs from previous sessions to avoid tab accumulation
       const existingPages = context.pages();
+      for (let i = 1; i < existingPages.length; i++) {
+        await existingPages[i].close().catch(() => {});
+      }
       const page = existingPages.length > 0 ? existingPages[0] : await context.newPage();
 
       // Step 4: clear stale cookies so detectLoginSuccess doesn't mistake
@@ -374,11 +390,31 @@ export async function captureViaAdsPower(
         adspowerProfileId: profileId,
       });
 
-      // Step 11: disconnect Playwright (don't kill the browser yet)
+      // Step 11: mimic human behavior after login — browse briefly before leaving.
+      // Closing instantly after login is a bot signal. Real users scroll around,
+      // check their feed, etc. We do a short random delay (8-20s) with some
+      // organic-looking activity (scroll, wait, maybe navigate to feed).
+      const cooldownMs = 8000 + Math.floor(Math.random() * 12000); // 8-20 seconds
+      log("post-login cooldown (mimicking human browsing)", { cooldownMs });
+      try {
+        // Navigate to feed — looks like a real user checking their page after login
+        await page.goto("https://www.tiktok.com/foryou", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+        await page.waitForTimeout(2000 + Math.random() * 3000);
+        // Scroll a bit
+        await page.mouse.wheel(0, 300 + Math.random() * 500);
+        await page.waitForTimeout(1500 + Math.random() * 2000);
+        await page.mouse.wheel(0, 200 + Math.random() * 400);
+        await page.waitForTimeout(cooldownMs - 5500); // remaining time
+      } catch {
+        // If anything fails during cooldown, just wait the remaining time silently
+        await new Promise((r) => setTimeout(r, cooldownMs));
+      }
+
+      // Step 12: disconnect Playwright
       try { await browser.close(); } catch {}
       browser = undefined;
 
-      // Step 12: stop the AdsPower browser
+      // Step 13: stop the AdsPower browser
       await stopAdsPowerBrowser(profileId);
 
       return { ...doc, adspowerProfileId: profileId };
