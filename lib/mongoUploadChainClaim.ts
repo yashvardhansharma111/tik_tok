@@ -2,6 +2,9 @@
 import mongoose from "mongoose";
 import { UploadModel } from "@/lib/models/Upload";
 
+/** Server identity for multi-server job claiming. Falls back to hostname + PID. */
+const SERVER_ID = process.env.SERVER_ID || `${require("os").hostname()}-${process.pid}`;
+
 /**
  * Claim the next pending upload job for this account (any batch), after the current job succeeded.
  * Used to post multiple videos on the same Playwright page without a full Studio cold load each time.
@@ -26,7 +29,15 @@ export async function claimNextPendingUploadForAccount(accountId: string): Promi
         pendingWindow,
       ],
     },
-    { $set: { status: "uploading", error: undefined, nextRetryAt: null } },
+    {
+      $set: {
+        status: "uploading",
+        error: undefined,
+        nextRetryAt: null,
+        claimedBy: SERVER_ID,
+        claimedAt: new Date(),
+      },
+    },
     { sort: { timestamp: 1 }, returnDocument: "after" }
   ).lean();
 }

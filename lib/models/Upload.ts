@@ -24,6 +24,10 @@ const UploadSchema = new Schema(
     timestamp: { type: Date, default: Date.now, index: true },
     /** Job not claimable until this time (stagger within batch + optional scheduled start). */
     notBefore: { type: Date, default: null, index: true },
+    /** Server ID that claimed this job (multi-server: prevents double-processing). */
+    claimedBy: { type: String, required: false, index: true },
+    /** When the job was claimed (used for stale-claim janitor on server crash). */
+    claimedAt: { type: Date, required: false, index: true },
   },
   { timestamps: true }
 );

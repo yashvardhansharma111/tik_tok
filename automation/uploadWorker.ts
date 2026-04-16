@@ -28,7 +28,7 @@ import {
   typeTextLikeHuman,
 } from "@/lib/humanBehavior";
 
-const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=webapp";
+export const TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=webapp";
 
 /**
  * Selector strategies used by this worker (update when TikTok Studio DOM changes).
@@ -288,7 +288,7 @@ function flowTiming(ctx: FlowContext, area: "music" | "post", phase: string, ms:
   ctx.flow(`[timing][${area}] ${phase} | ${sec}s | reason=${reason}${tail}`);
 }
 
-function createFlowContext(username: string): FlowContext {
+export function createFlowContext(username: string): FlowContext {
   const safe = username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
   const runId = `${Date.now()}-${safe}`;
   const debugDir = path.join(process.cwd(), "storage", "debug", runId);
@@ -345,7 +345,7 @@ function isTransientProxyNavigationError(e: unknown): boolean {
  * First navigation to Studio — retries on flaky proxy tunnels (`net::ERR_TUNNEL_CONNECTION_FAILED`, etc.).
  * Env: `UPLOAD_GOTO_RETRIES` (default 3), `UPLOAD_GOTO_RETRY_DELAY_MS` (default 5000).
  */
-async function gotoTikTokUploadWithRetries(page: Page, ctx: FlowContext, url: string): Promise<void> {
+export async function gotoTikTokUploadWithRetries(page: Page, ctx: FlowContext, url: string): Promise<void> {
   const max = Math.max(1, Math.min(6, Number(process.env.UPLOAD_GOTO_RETRIES || 3)));
   const delayMs = Math.max(300, Number(process.env.UPLOAD_GOTO_RETRY_DELAY_MS || 3200));
   let lastErr: unknown;
@@ -451,7 +451,7 @@ async function logCoreElements(page: Page, ctx: FlowContext): Promise<void> {
   ctx.debug(`post: ${await describeFirstVisible(post, ctx)}`);
 }
 
-async function waitForFileInput(page: Page, ctx: FlowContext, timeoutMs: number): Promise<boolean> {
+export async function waitForFileInput(page: Page, ctx: FlowContext, timeoutMs: number): Promise<boolean> {
   ctx.flow(`wait: file input attached (${TIKTOK_STUDIO_SELECTORS.uploadFileInput})`);
   try {
     await page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first().waitFor({ state: "attached", timeout: timeoutMs });
@@ -2790,7 +2790,7 @@ export async function discardUploadSessionHandle(handle: TikTokUploadSessionHand
 /**
  * Upload → caption → sound → toggles → Post (assumes upload UI is ready with file input available).
  */
-async function runStudioUploadPipeline(
+export async function runStudioUploadPipeline(
   page: Page,
   ctx: FlowContext,
   videoPath: string,

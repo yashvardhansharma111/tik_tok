@@ -2,6 +2,9 @@
 import mongoose from "mongoose";
 import { UploadModel } from "@/lib/models/Upload";
 
+/** Server identity for multi-server job claiming. Falls back to hostname + PID. */
+const SERVER_ID = process.env.SERVER_ID || `${require("os").hostname()}-${process.pid}`;
+
 export type ClaimUploadBatchOptions = {
   /** Skip jobs for these account ObjectIds (e.g. account mid upload chain on same page). */
   excludeAccountIds?: string[];
@@ -82,7 +85,13 @@ export async function claimUploadBatch(limit: number, opts?: ClaimUploadBatchOpt
     const job = await UploadModel.findOneAndUpdate(
       queryBase as any,
       {
-        $set: { status: "uploading", error: undefined, nextRetryAt: null },
+        $set: {
+          status: "uploading",
+          error: undefined,
+          nextRetryAt: null,
+          claimedBy: SERVER_ID,
+          claimedAt: new Date(),
+        },
       },
       { sort: { notBefore: 1 as const, timestamp: 1 }, returnDocument: "after" }
     ).lean();

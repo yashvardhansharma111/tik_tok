@@ -19,6 +19,7 @@ import { clearAllUploadContexts } from "@/lib/uploadContextPool";
 import { resolveOptimizedVideoPath } from "@/lib/optimizeVideoForUpload";
 import { buildStickyProxyForAccount, type PlaywrightProxyConfig } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
+import { uploadViaAdsPower } from "@/automation/adspowerUpload";
 import { afterCampaignUploadSuccess, afterCampaignJobPermanentFail } from "@/lib/campaignJobQueue";
 import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
 
@@ -69,6 +70,7 @@ type GoLoginAccountAdapted = {
   session: string;              // JSON-stringified storageState for runUploadWithSession
   proxyConfig: PlaywrightProxyConfig;
   updatedAt: Date;              // last time the session was captured/refreshed (for freshness check)
+  adspowerProfileId?: string;   // if present, upload goes through AdsPower (not standalone Playwright)
 };
 
 const GOLOGIN_COLLECTION_NAME = () => process.env.GOLOGIN_ACCOUNTS_COLLECTION || "gologin_accounts";
@@ -166,6 +168,7 @@ async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdap
     const storageState = (doc as any).session?.storageState;
     const username = (doc as any).username;
     const updatedAt = (doc as any).updatedAt;
+    const adspowerProfileId = (doc as any).adspowerProfileId;
 
     if (!username || typeof username !== "string") {
       console.warn("[MongoRunner] gologin_accounts: missing username", { accountId });
@@ -189,6 +192,7 @@ async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdap
         password: String(proxy.password),
       },
       updatedAt: updatedAt instanceof Date ? updatedAt : new Date(updatedAt || 0),
+      adspowerProfileId: typeof adspowerProfileId === "string" ? adspowerProfileId : undefined,
     };
   } catch (e) {
     console.warn("[MongoRunner] loadGoLoginAccount error", {
@@ -357,6 +361,11 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       const campaignStep = (upload as any).campaignStep as number | undefined;
       const videoRel = typeof (upload as any).videoRelPath === "string" ? (upload as any).videoRelPath : "";
 
+      const useAdsPower =
+        gologinAccount?.adspowerProfileId &&
+        process.env.ADSPOWER_ENABLED !== "0" &&
+        process.env.ADSPOWER_ENABLED !== "false";
+
       console.log("[MongoRunner] start upload", {
         uploadId,
         accountId,
@@ -364,6 +373,8 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         attemptNumber,
         musicQuery: musicQuery || "(none)",
         chained: Boolean(sessionHandle),
+        via: useAdsPower ? "adspower" : "playwright",
+        ...(useAdsPower ? { adspowerProfileId: gologinAccount!.adspowerProfileId } : {}),
         ...(campaignId
           ? {
               campaignUploadId: campaignId,
@@ -375,29 +386,63 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 
       const videoForUpload = await resolveOptimizedVideoPath(videoPath);
 
-      // Opt-in proxy exit-IP verification (PROXY_VERIFY=1). Logs the IP each upload uses;
-      // helps detect proxy rotation / wrong session binding. Never blocks on failure.
-      const verifiedIp = await verifyProxyIP(proxyConfig);
-      if (verifiedIp) {
-        console.log("[MongoRunner] proxy exit IP", { accountId, ip: verifiedIp });
+      let result: { success: boolean; error?: string; soundUsed?: string; sessionHandle?: any };
+
+      if (useAdsPower) {
+        // ━━━━━ AdsPower path: same fingerprint as login, no proxy/cookie juggling ━━━━━
+        const adspResult = await uploadViaAdsPower({
+          adspowerProfileId: gologinAccount!.adspowerProfileId!,
+          username: (accountDoc as any).username,
+          videoPath: videoForUpload,
+          caption,
+          musicQuery,
+        });
+
+        // If AdsPower detected session expired, mark account as logged_out immediately
+        if (adspResult.sessionExpired) {
+          console.warn("[MongoRunner] AdsPower detected session expired", { accountId });
+          await updateGoLoginAccountStatus(accountId, { status: "logged_out" });
+        }
+
+        result = {
+          success: adspResult.success,
+          error: adspResult.error,
+          soundUsed: adspResult.soundUsed,
+        };
+
+        // Async gap between AdsPower uploads — randomized delay to look human.
+        // Only applies when there are more jobs coming for the same wave.
+        const gapMin = Math.max(0, Number(process.env.UPLOAD_INTER_GAP_MIN_MS || 3000));
+        const gapMax = Math.max(gapMin, Number(process.env.UPLOAD_INTER_GAP_MAX_MS || 12000));
+        const gap = gapMin + Math.floor(Math.random() * (gapMax - gapMin + 1));
+        console.log("[MongoRunner] inter-upload gap", { gap, accountId });
+        await sleep(gap);
+
+      } else {
+        // ━━━━━ Legacy Playwright path: standalone browser + storageState file ━━━━━
+        // Opt-in proxy exit-IP verification (PROXY_VERIFY=1).
+        const verifiedIp = await verifyProxyIP(proxyConfig);
+        if (verifiedIp) {
+          console.log("[MongoRunner] proxy exit IP", { accountId, ip: verifiedIp });
+        }
+
+        /** Chain reuse depends on sessionHandle from the previous step, not on the runner’s shared Browser. */
+        const sessionOpts =
+          chainEnabled && sessionHandle
+            ? { reuse: sessionHandle, holdSessionForChain: true as const }
+            : undefined;
+
+        result = await runUploadWithSession(
+          (accountDoc as any).username,
+          (accountDoc as any).session,
+          videoForUpload,
+          caption,
+          proxyConfig,
+          browser,
+          musicQuery,
+          sessionOpts
+        );
       }
-
-      /** Chain reuse depends on sessionHandle from the previous step, not on the runner’s shared Browser. */
-      const sessionOpts =
-        chainEnabled && sessionHandle
-          ? { reuse: sessionHandle, holdSessionForChain: true as const }
-          : undefined;
-
-      const result = await runUploadWithSession(
-        (accountDoc as any).username,
-        (accountDoc as any).session,
-        videoForUpload,
-        caption,
-        proxyConfig,
-        browser,
-        musicQuery,
-        sessionOpts
-      );
 
       if (result.success) {
         await UploadModel.updateOne(
@@ -468,7 +513,11 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       }
       if (gologinAccount) {
         if (isSessionExpiredError(errorMsg)) {
-          await updateGoLoginAccountStatus(accountId, { status: "expired" });
+          // Mark as logged_out so the UI knows this account needs re-login.
+          // We don't mark as "expired" (that's for session age). "logged_out"
+          // means TikTok actively rejected the session during upload.
+          await updateGoLoginAccountStatus(accountId, { status: "logged_out" });
+          console.warn("[MongoRunner] account marked as logged_out", { accountId, errorMsg });
         }
       } else {
         await markAccountExpiredIfSessionError(accountId, errorMsg);
