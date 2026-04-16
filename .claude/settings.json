@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(node -e ':*)",
-      "Bash(node)"
+      "Bash(node)",
+      "Bash(node -e ' *)",
+      "Bash(npx tsc *)",
+      "Bash(xargs grep *)"
     ]
   }
 }

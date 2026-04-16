@@ -17,7 +17,7 @@ import {
 } from "@/automation/uploadWorker";
 import { clearAllUploadContexts } from "@/lib/uploadContextPool";
 import { resolveOptimizedVideoPath } from "@/lib/optimizeVideoForUpload";
-import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
+import { buildStickyProxyForAccount, type PlaywrightProxyConfig } from "@/lib/proxyPlaywright";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/accountSessionExpiry";
 import { afterCampaignUploadSuccess, afterCampaignJobPermanentFail } from "@/lib/campaignJobQueue";
 import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
@@ -57,6 +57,146 @@ const busyAccountIds = new Set<string>();
 
 function cleanupBatchIfLast(uploadId: string) {
   return tryCleanupUploadBatch(uploadId);
+}
+
+/**
+ * Shape returned by loadGoLoginAccount. Adapts the gologin_accounts schema
+ * (structured proxy + storageState object) to what runUploadWithSession expects
+ * (PlaywrightProxyConfig + JSON-stringified session).
+ */
+type GoLoginAccountAdapted = {
+  username: string;
+  session: string;              // JSON-stringified storageState for runUploadWithSession
+  proxyConfig: PlaywrightProxyConfig;
+  updatedAt: Date;              // last time the session was captured/refreshed (for freshness check)
+};
+
+const GOLOGIN_COLLECTION_NAME = () => process.env.GOLOGIN_ACCOUNTS_COLLECTION || "gologin_accounts";
+
+/**
+ * Update a gologin_accounts document. Used for lastUsedAt + status transitions.
+ * Fails silently — status tracking should never break an upload.
+ */
+async function updateGoLoginAccountStatus(
+  accountId: string,
+  update: Record<string, unknown>
+): Promise<void> {
+  try {
+    await mongoose.connection.collection(GOLOGIN_COLLECTION_NAME()).updateOne(
+      { accountId },
+      { $set: { ...update, updatedAt: new Date() } }
+    );
+  } catch (e) {
+    console.warn("[MongoRunner] updateGoLoginAccountStatus failed", {
+      accountId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
+ * Returns true if a gologin account's captured session is older than
+ * GOLOGIN_SESSION_MAX_AGE_DAYS (default 3 days). Expired sessions must be
+ * re-captured via loginAndCaptureSession before they can be used again.
+ */
+function isGoLoginSessionExpired(updatedAt: Date): boolean {
+  const maxDays = Number(process.env.GOLOGIN_SESSION_MAX_AGE_DAYS || 3);
+  if (!Number.isFinite(maxDays) || maxDays <= 0) return false;
+  const maxAgeMs = maxDays * 24 * 60 * 60 * 1000;
+  return Date.now() - new Date(updatedAt).getTime() > maxAgeMs;
+}
+
+/**
+ * Verify the exit IP of a proxy config using Playwright's APIRequestContext.
+ * Uses the same proxy code path as browser launches (no extra deps needed).
+ * Returns the exit IP string, or null if the check fails.
+ *
+ * Opt-in via PROXY_VERIFY=1 — adds ~500ms and one external request per upload.
+ */
+async function verifyProxyIP(proxyConfig: PlaywrightProxyConfig): Promise<string | null> {
+  if (process.env.PROXY_VERIFY !== "1" && process.env.PROXY_VERIFY !== "true") {
+    return null;
+  }
+  try {
+    const { request } = await import("playwright");
+    const ctx = await request.newContext({
+      proxy: {
+        server: proxyConfig.server,
+        username: proxyConfig.username,
+        password: proxyConfig.password,
+      },
+      timeout: 10_000,
+    });
+    try {
+      const res = await ctx.get("https://api.ipify.org?format=json");
+      if (!res.ok()) {
+        console.warn("[MongoRunner] verifyProxyIP: non-2xx", { status: res.status() });
+        return null;
+      }
+      const body = (await res.json()) as { ip?: string };
+      return body.ip || null;
+    } finally {
+      await ctx.dispose().catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[MongoRunner] verifyProxyIP failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
+
+/**
+ * Loads an account from the gologin_accounts collection (populated by
+ * automation/loginAndCaptureSession.ts) and adapts it for the upload worker.
+ *
+ * Returns null if the account doesn't exist or the document is malformed —
+ * caller should fall back to the legacy AccountModel path.
+ *
+ * CRITICAL: the returned proxyConfig is the SAME sticky proxy that was used
+ * at login time. Using a different proxy here would cause TikTok session
+ * invalidation / captcha / shadow-ban.
+ */
+async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdapted | null> {
+  try {
+    const doc = await mongoose.connection.collection(GOLOGIN_COLLECTION_NAME()).findOne({ accountId });
+    if (!doc) return null;
+
+    const proxy = (doc as any).proxy;
+    const storageState = (doc as any).session?.storageState;
+    const username = (doc as any).username;
+    const updatedAt = (doc as any).updatedAt;
+
+    if (!username || typeof username !== "string") {
+      console.warn("[MongoRunner] gologin_accounts: missing username", { accountId });
+      return null;
+    }
+    if (!proxy || !proxy.host || !proxy.port || !proxy.username || !proxy.password) {
+      console.warn("[MongoRunner] gologin_accounts: malformed proxy", { accountId });
+      return null;
+    }
+    if (!storageState || typeof storageState !== "object") {
+      console.warn("[MongoRunner] gologin_accounts: missing session.storageState", { accountId });
+      return null;
+    }
+
+    return {
+      username,
+      session: JSON.stringify(storageState),
+      proxyConfig: {
+        server: `http://${proxy.host}:${proxy.port}`,
+        username: String(proxy.username),
+        password: String(proxy.password),
+      },
+      updatedAt: updatedAt instanceof Date ? updatedAt : new Date(updatedAt || 0),
+    };
+  } catch (e) {
+    console.warn("[MongoRunner] loadGoLoginAccount error", {
+      accountId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
 }
 
 function resolveUploadVideoPath(uploadId: string, doc: any): string {
@@ -111,9 +251,50 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         continue;
       }
 
-      const accountDoc = await AccountModel.findById(accountId).lean();
+      // Try the new gologin_accounts collection first (populated by loginAndCaptureSession).
+      // If the account was captured through GoLogin, this returns the stored sticky proxy
+      // and storageState so the upload uses the exact same IP the login was captured on.
+      const gologinAccount = await loadGoLoginAccount(accountId);
+
+      // Session freshness gate — gologin captures have a max age (default 3 days).
+      // Older than that: mark expired and fail permanently, user must re-run capture.
+      if (gologinAccount && isGoLoginSessionExpired(gologinAccount.updatedAt)) {
+        console.warn("[MongoRunner] gologin session too old, marking expired", {
+          accountId,
+          updatedAt: gologinAccount.updatedAt,
+          maxAgeDays: Number(process.env.GOLOGIN_SESSION_MAX_AGE_DAYS || 3),
+        });
+        await updateGoLoginAccountStatus(accountId, { status: "expired" });
+        await UploadModel.updateOne(
+          { _id: uploadObjectId, status: "uploading" },
+          {
+            $set: {
+              status: "failed",
+              error: "SESSION_EXPIRED: gologin capture older than max age — re-run loginAndCaptureSession",
+              nextRetryAt: null,
+            },
+          }
+        );
+        await afterCampaignJobPermanentFail({
+          campaignId: (upload as any).campaignId,
+          accountId,
+          campaignStep: (upload as any).campaignStep ?? 0,
+          error: "SESSION_EXPIRED",
+        }).catch(() => {});
+        if (sessionHandle) {
+          await discardUploadSessionHandle(sessionHandle);
+          sessionHandle = undefined;
+        }
+        upload = null;
+        continue;
+      }
+
+      const accountDoc = gologinAccount
+        ? (gologinAccount as unknown as { username: string; session: string })
+        : await AccountModel.findById(accountId).lean();
+
       if (!accountDoc) {
-        console.warn("[MongoRunner] account not found", { uploadId, accountId });
+        console.warn("[MongoRunner] account not found (checked gologin_accounts + legacy)", { uploadId, accountId });
         await UploadModel.updateOne(
           { _id: uploadObjectId, status: "uploading" },
           {
@@ -157,15 +338,20 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
           : undefined;
 
       const attemptNumber: number = updated.attempts || 1;
-      const proxyConfig =
-        buildStickyProxyForAccount(
-          (accountDoc as any).username,
-          (accountDoc as any).proxy,
-          attemptNumber,
-          accountId
-        ) ?? {
-          server: process.env.PROXY_SERVER || "http://geo.iproyal.com:12321",
-        };
+
+      // CRITICAL: if the account came from gologin_accounts, use its stored proxy directly.
+      // Login proxy === upload proxy. Using a different proxy on upload will invalidate the
+      // TikTok session (captcha / shadow-ban / logout).
+      const proxyConfig: PlaywrightProxyConfig = gologinAccount
+        ? gologinAccount.proxyConfig
+        : (buildStickyProxyForAccount(
+            (accountDoc as any).username,
+            (accountDoc as any).proxy,
+            attemptNumber,
+            accountId
+          ) ?? {
+            server: process.env.PROXY_SERVER || "http://geo.iproyal.com:12321",
+          });
 
       const campaignId = (upload as any).campaignId as string | undefined;
       const campaignStep = (upload as any).campaignStep as number | undefined;
@@ -188,6 +374,13 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       });
 
       const videoForUpload = await resolveOptimizedVideoPath(videoPath);
+
+      // Opt-in proxy exit-IP verification (PROXY_VERIFY=1). Logs the IP each upload uses;
+      // helps detect proxy rotation / wrong session binding. Never blocks on failure.
+      const verifiedIp = await verifyProxyIP(proxyConfig);
+      if (verifiedIp) {
+        console.log("[MongoRunner] proxy exit IP", { accountId, ip: verifiedIp });
+      }
 
       /** Chain reuse depends on sessionHandle from the previous step, not on the runner’s shared Browser. */
       const sessionOpts =
@@ -234,10 +427,17 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             ? { campaignUploadId: campaignId, campaignStep: campaignStep ?? 0, videoFile: videoRel || "" }
             : {}),
         });
-        await AccountModel.updateOne(
-          { _id: new mongoose.Types.ObjectId(accountId) },
-          { $set: { lastUsedAt: new Date(), status: "active" } }
-        );
+        if (gologinAccount) {
+          await updateGoLoginAccountStatus(accountId, {
+            lastUsedAt: new Date(),
+            status: "active",
+          });
+        } else {
+          await AccountModel.updateOne(
+            { _id: new mongoose.Types.ObjectId(accountId) },
+            { $set: { lastUsedAt: new Date(), status: "active" } }
+          );
+        }
         await cleanupBatchIfLast(uploadId);
 
         if (chainEnabled && result.sessionHandle) {
@@ -266,7 +466,13 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         await discardUploadSessionHandle(sessionHandle);
         sessionHandle = undefined;
       }
-      await markAccountExpiredIfSessionError(accountId, errorMsg);
+      if (gologinAccount) {
+        if (isSessionExpiredError(errorMsg)) {
+          await updateGoLoginAccountStatus(accountId, { status: "expired" });
+        }
+      } else {
+        await markAccountExpiredIfSessionError(accountId, errorMsg);
+      }
 
       const maxAttempts = Math.max(1, Number(process.env.UPLOAD_MAX_ATTEMPTS || 2));
       const isBrowserClosed = /BROWSER_CLOSED|page.*closed|context.*closed|browser.*closed/i.test(errorMsg);
