@@ -11,7 +11,7 @@
  *   2. Env vars:
  *        MONGODB_URI                  (required)
  *        MONGODB_DB                   (optional, default "tiktok_automation")
- *        GOLOGIN_ACCOUNTS_COLLECTION  (optional, default "accounts")
+ *        ADSPOWER_ACCOUNTS_COLLECTION  (optional, default "accounts")
  *        GOLOGIN_CDP_ENDPOINT         (optional, default "http://localhost:9222")
  *        PROXY_HOST, PROXY_PORT       (required for CLI or default baseProxy)
  *        PROXY_BASE_USERNAME          (required for CLI or default baseProxy)
@@ -37,7 +37,7 @@ type MongoCollection = ReturnType<mongoose.Connection["collection"]>;
 const CDP_ENDPOINT = process.env.GOLOGIN_CDP_ENDPOINT || "http://localhost:9222";
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "";
 const DB_NAME = process.env.MONGODB_DB || "tiktok_automation";
-const COLLECTION_NAME = process.env.GOLOGIN_ACCOUNTS_COLLECTION || "gologin_accounts";
+const COLLECTION_NAME = process.env.ADSPOWER_ACCOUNTS_COLLECTION || "adspower_accounts";
 
 const TIKTOK_LOGIN_URL = "https://www.tiktok.com/login";
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for manual login + captcha
@@ -116,13 +116,13 @@ function ts(): string {
 }
 
 function log(msg: string, extra?: Record<string, unknown>) {
-  if (extra) console.log(`[gologin-capture ${ts()}] ${msg}`, extra);
-  else console.log(`[gologin-capture ${ts()}] ${msg}`);
+  if (extra) console.log(`[session-capture ${ts()}] ${msg}`, extra);
+  else console.log(`[session-capture ${ts()}] ${msg}`);
 }
 
 function warn(msg: string, extra?: Record<string, unknown>) {
-  if (extra) console.warn(`[gologin-capture ${ts()}] WARN ${msg}`, extra);
-  else console.warn(`[gologin-capture ${ts()}] WARN ${msg}`);
+  if (extra) console.warn(`[session-capture ${ts()}] WARN ${msg}`, extra);
+  else console.warn(`[session-capture ${ts()}] WARN ${msg}`);
 }
 
 // ---------- proxy ----------
@@ -514,8 +514,8 @@ export async function loginAndCaptureSession(
       // ----- Issue 3: proxy country check (fails the capture on mismatch) -----
       const skipCountryCheck =
         options.skipCountryCheck === true ||
-        process.env.GOLOGIN_SKIP_COUNTRY_CHECK === "1" ||
-        process.env.GOLOGIN_SKIP_COUNTRY_CHECK === "true";
+        process.env.SKIP_COUNTRY_CHECK === "1" ||
+        process.env.SKIP_COUNTRY_CHECK === "true";
 
       if (!skipCountryCheck) {
         const expectedCountry = extractExpectedCountry(proxy.username);
@@ -529,7 +529,7 @@ export async function loginAndCaptureSession(
             throw new Error(
               `Proxy country mismatch: expected ${expectedCountry}, actual ${actualCountry} (ip: ${ip}). ` +
               `The GoLogin profile is not routing through the expected proxy. ` +
-              `Fix the profile's proxy setting or set GOLOGIN_SKIP_COUNTRY_CHECK=1 to bypass.`
+              `Fix the profile's proxy setting or set SKIP_COUNTRY_CHECK=1 to bypass.`
             );
           } else {
             log("proxy country verified", { country: actualCountry, ip });
@@ -628,7 +628,7 @@ async function cli() {
     console.error("  PROXY_HOST, PROXY_PORT, PROXY_BASE_USERNAME, PROXY_BASE_PASSWORD");
     console.error("Optional env:");
     console.error("  MONGODB_DB (default: tiktok_automation)");
-    console.error("  GOLOGIN_ACCOUNTS_COLLECTION (default: accounts)");
+    console.error("  ADSPOWER_ACCOUNTS_COLLECTION (default: accounts)");
     console.error("  GOLOGIN_CDP_ENDPOINT (default: http://localhost:9222)");
     process.exit(1);
   }
@@ -637,7 +637,7 @@ async function cli() {
     try { await closeMongo(); } catch {}
   };
   process.on("SIGINT", async () => {
-    console.warn("\n[gologin-capture] SIGINT -- shutting down");
+    console.warn("\n[session-capture] SIGINT -- shutting down");
     await shutdown();
     process.exit(130);
   });

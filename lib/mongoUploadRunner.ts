@@ -61,11 +61,11 @@ function cleanupBatchIfLast(uploadId: string) {
 }
 
 /**
- * Shape returned by loadGoLoginAccount. Adapts the gologin_accounts schema
+ * Shape returned by loadCapturedAccount. Adapts the adspower_accounts schema
  * (structured proxy + storageState object) to what runUploadWithSession expects
  * (PlaywrightProxyConfig + JSON-stringified session).
  */
-type GoLoginAccountAdapted = {
+type CapturedAccountAdapted = {
   username: string;
   session: string;              // JSON-stringified storageState for runUploadWithSession
   proxyConfig: PlaywrightProxyConfig;
@@ -73,23 +73,23 @@ type GoLoginAccountAdapted = {
   adspowerProfileId?: string;   // if present, upload goes through AdsPower (not standalone Playwright)
 };
 
-const GOLOGIN_COLLECTION_NAME = () => process.env.GOLOGIN_ACCOUNTS_COLLECTION || "gologin_accounts";
+const ACCOUNTS_COLLECTION = () => process.env.ADSPOWER_ACCOUNTS_COLLECTION || "adspower_accounts";
 
 /**
- * Update a gologin_accounts document. Used for lastUsedAt + status transitions.
+ * Update a adspower_accounts document. Used for lastUsedAt + status transitions.
  * Fails silently — status tracking should never break an upload.
  */
-async function updateGoLoginAccountStatus(
+async function updateCapturedAccountStatus(
   accountId: string,
   update: Record<string, unknown>
 ): Promise<void> {
   try {
-    await mongoose.connection.collection(GOLOGIN_COLLECTION_NAME()).updateOne(
+    await mongoose.connection.collection(ACCOUNTS_COLLECTION()).updateOne(
       { accountId },
       { $set: { ...update, updatedAt: new Date() } }
     );
   } catch (e) {
-    console.warn("[MongoRunner] updateGoLoginAccountStatus failed", {
+    console.warn("[MongoRunner] updateCapturedAccountStatus failed", {
       accountId,
       error: e instanceof Error ? e.message : String(e),
     });
@@ -97,12 +97,12 @@ async function updateGoLoginAccountStatus(
 }
 
 /**
- * Returns true if a gologin account's captured session is older than
- * GOLOGIN_SESSION_MAX_AGE_DAYS (default 3 days). Expired sessions must be
+ * Returns true if a captured account's session is older than
+ * SESSION_MAX_AGE_DAYS (default 3 days). Expired sessions must be
  * re-captured via loginAndCaptureSession before they can be used again.
  */
-function isGoLoginSessionExpired(updatedAt: Date): boolean {
-  const maxDays = Number(process.env.GOLOGIN_SESSION_MAX_AGE_DAYS || 3);
+function isSessionTooOld(updatedAt: Date): boolean {
+  const maxDays = Number(process.env.SESSION_MAX_AGE_DAYS || 3);
   if (!Number.isFinite(maxDays) || maxDays <= 0) return false;
   const maxAgeMs = maxDays * 24 * 60 * 60 * 1000;
   return Date.now() - new Date(updatedAt).getTime() > maxAgeMs;
@@ -149,7 +149,7 @@ async function verifyProxyIP(proxyConfig: PlaywrightProxyConfig): Promise<string
 }
 
 /**
- * Loads an account from the gologin_accounts collection (populated by
+ * Loads an account from the adspower_accounts collection (populated by
  * automation/loginAndCaptureSession.ts) and adapts it for the upload worker.
  *
  * Returns null if the account doesn't exist or the document is malformed —
@@ -159,9 +159,9 @@ async function verifyProxyIP(proxyConfig: PlaywrightProxyConfig): Promise<string
  * at login time. Using a different proxy here would cause TikTok session
  * invalidation / captcha / shadow-ban.
  */
-async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdapted | null> {
+async function loadCapturedAccount(accountId: string): Promise<CapturedAccountAdapted | null> {
   try {
-    const doc = await mongoose.connection.collection(GOLOGIN_COLLECTION_NAME()).findOne({ accountId });
+    const doc = await mongoose.connection.collection(ACCOUNTS_COLLECTION()).findOne({ accountId });
     if (!doc) return null;
 
     const proxy = (doc as any).proxy;
@@ -171,15 +171,15 @@ async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdap
     const adspowerProfileId = (doc as any).adspowerProfileId;
 
     if (!username || typeof username !== "string") {
-      console.warn("[MongoRunner] gologin_accounts: missing username", { accountId });
+      console.warn("[MongoRunner] adspower_accounts: missing username", { accountId });
       return null;
     }
     if (!proxy || !proxy.host || !proxy.port || !proxy.username || !proxy.password) {
-      console.warn("[MongoRunner] gologin_accounts: malformed proxy", { accountId });
+      console.warn("[MongoRunner] adspower_accounts: malformed proxy", { accountId });
       return null;
     }
     if (!storageState || typeof storageState !== "object") {
-      console.warn("[MongoRunner] gologin_accounts: missing session.storageState", { accountId });
+      console.warn("[MongoRunner] adspower_accounts: missing session.storageState", { accountId });
       return null;
     }
 
@@ -195,7 +195,7 @@ async function loadGoLoginAccount(accountId: string): Promise<GoLoginAccountAdap
       adspowerProfileId: typeof adspowerProfileId === "string" ? adspowerProfileId : undefined,
     };
   } catch (e) {
-    console.warn("[MongoRunner] loadGoLoginAccount error", {
+    console.warn("[MongoRunner] loadCapturedAccount error", {
       accountId,
       error: e instanceof Error ? e.message : String(e),
     });
@@ -255,26 +255,26 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         continue;
       }
 
-      // Try the new gologin_accounts collection first (populated by loginAndCaptureSession).
-      // If the account was captured through GoLogin, this returns the stored sticky proxy
+      // Try the new adspower_accounts collection first (populated by loginAndCaptureSession).
+      // If the account was captured through AdsPower, this returns the stored sticky proxy
       // and storageState so the upload uses the exact same IP the login was captured on.
-      const gologinAccount = await loadGoLoginAccount(accountId);
+      const capturedAccount = await loadCapturedAccount(accountId);
 
-      // Session freshness gate — gologin captures have a max age (default 3 days).
+      // Session freshness gate — captured sessions have a max age (default 3 days).
       // Older than that: mark expired and fail permanently, user must re-run capture.
-      if (gologinAccount && isGoLoginSessionExpired(gologinAccount.updatedAt)) {
-        console.warn("[MongoRunner] gologin session too old, marking expired", {
+      if (capturedAccount && isSessionTooOld(capturedAccount.updatedAt)) {
+        console.warn("[MongoRunner] captured session too old, marking expired", {
           accountId,
-          updatedAt: gologinAccount.updatedAt,
-          maxAgeDays: Number(process.env.GOLOGIN_SESSION_MAX_AGE_DAYS || 3),
+          updatedAt: capturedAccount.updatedAt,
+          maxAgeDays: Number(process.env.SESSION_MAX_AGE_DAYS || 3),
         });
-        await updateGoLoginAccountStatus(accountId, { status: "expired" });
+        await updateCapturedAccountStatus(accountId, { status: "expired" });
         await UploadModel.updateOne(
           { _id: uploadObjectId, status: "uploading" },
           {
             $set: {
               status: "failed",
-              error: "SESSION_EXPIRED: gologin capture older than max age — re-run loginAndCaptureSession",
+              error: "SESSION_EXPIRED: session older than max age — re-capture via AdsPower — re-run loginAndCaptureSession",
               nextRetryAt: null,
             },
           }
@@ -293,12 +293,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         continue;
       }
 
-      const accountDoc = gologinAccount
-        ? (gologinAccount as unknown as { username: string; session: string })
+      const accountDoc = capturedAccount
+        ? (capturedAccount as unknown as { username: string; session: string })
         : await AccountModel.findById(accountId).lean();
 
       if (!accountDoc) {
-        console.warn("[MongoRunner] account not found (checked gologin_accounts + legacy)", { uploadId, accountId });
+        console.warn("[MongoRunner] account not found (checked adspower_accounts + legacy)", { uploadId, accountId });
         await UploadModel.updateOne(
           { _id: uploadObjectId, status: "uploading" },
           {
@@ -343,11 +343,11 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 
       const attemptNumber: number = updated.attempts || 1;
 
-      // CRITICAL: if the account came from gologin_accounts, use its stored proxy directly.
+      // CRITICAL: if the account came from adspower_accounts, use its stored proxy directly.
       // Login proxy === upload proxy. Using a different proxy on upload will invalidate the
       // TikTok session (captcha / shadow-ban / logout).
-      const proxyConfig: PlaywrightProxyConfig = gologinAccount
-        ? gologinAccount.proxyConfig
+      const proxyConfig: PlaywrightProxyConfig = capturedAccount
+        ? capturedAccount.proxyConfig
         : (buildStickyProxyForAccount(
             (accountDoc as any).username,
             (accountDoc as any).proxy,
@@ -362,7 +362,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       const videoRel = typeof (upload as any).videoRelPath === "string" ? (upload as any).videoRelPath : "";
 
       const useAdsPower =
-        gologinAccount?.adspowerProfileId &&
+        capturedAccount?.adspowerProfileId &&
         process.env.ADSPOWER_ENABLED !== "0" &&
         process.env.ADSPOWER_ENABLED !== "false";
 
@@ -374,7 +374,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         musicQuery: musicQuery || "(none)",
         chained: Boolean(sessionHandle),
         via: useAdsPower ? "adspower" : "playwright",
-        ...(useAdsPower ? { adspowerProfileId: gologinAccount!.adspowerProfileId } : {}),
+        ...(useAdsPower ? { adspowerProfileId: capturedAccount!.adspowerProfileId } : {}),
         ...(campaignId
           ? {
               campaignUploadId: campaignId,
@@ -391,7 +391,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
       if (useAdsPower) {
         // ━━━━━ AdsPower path: same fingerprint as login, no proxy/cookie juggling ━━━━━
         const adspResult = await uploadViaAdsPower({
-          adspowerProfileId: gologinAccount!.adspowerProfileId!,
+          adspowerProfileId: capturedAccount!.adspowerProfileId!,
           username: (accountDoc as any).username,
           videoPath: videoForUpload,
           caption,
@@ -401,7 +401,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         // If AdsPower detected session expired, mark account as logged_out immediately
         if (adspResult.sessionExpired) {
           console.warn("[MongoRunner] AdsPower detected session expired", { accountId });
-          await updateGoLoginAccountStatus(accountId, { status: "logged_out" });
+          await updateCapturedAccountStatus(accountId, { status: "logged_out" });
         }
 
         result = {
@@ -472,8 +472,8 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             ? { campaignUploadId: campaignId, campaignStep: campaignStep ?? 0, videoFile: videoRel || "" }
             : {}),
         });
-        if (gologinAccount) {
-          await updateGoLoginAccountStatus(accountId, {
+        if (capturedAccount) {
+          await updateCapturedAccountStatus(accountId, {
             lastUsedAt: new Date(),
             status: "active",
           });
@@ -511,12 +511,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         await discardUploadSessionHandle(sessionHandle);
         sessionHandle = undefined;
       }
-      if (gologinAccount) {
+      if (capturedAccount) {
         if (isSessionExpiredError(errorMsg)) {
           // Mark as logged_out so the UI knows this account needs re-login.
           // We don't mark as "expired" (that's for session age). "logged_out"
           // means TikTok actively rejected the session during upload.
-          await updateGoLoginAccountStatus(accountId, { status: "logged_out" });
+          await updateCapturedAccountStatus(accountId, { status: "logged_out" });
           console.warn("[MongoRunner] account marked as logged_out", { accountId, errorMsg });
         }
       } else {

@@ -22,7 +22,7 @@ export const maxDuration = 300;
  *   4. Connect Playwright via CDP
  *   5. Open TikTok login, wait for manual login
  *   6. Capture session natively via context.storageState()
- *   7. Save to MongoDB (gologin_accounts)
+ *   7. Save to MongoDB (adspower_accounts)
  *   8. Stop AdsPower browser
  *   9. Return summary
  *
@@ -114,9 +114,9 @@ export async function POST(request: Request) {
     }
 
     // Rate limit: 30s cooldown per account
-    const cooldownMs = Math.max(0, Number(process.env.GOLOGIN_CAPTURE_COOLDOWN_MS || 30_000));
+    const cooldownMs = Math.max(0, Number(process.env.CAPTURE_COOLDOWN_MS || 30_000));
     if (cooldownMs > 0) {
-      const collectionName = process.env.GOLOGIN_ACCOUNTS_COLLECTION || "gologin_accounts";
+      const collectionName = process.env.ADSPOWER_ACCOUNTS_COLLECTION || "adspower_accounts";
       const existingCapture = await mongoose.connection
         .collection(collectionName)
         .findOne({ accountId });

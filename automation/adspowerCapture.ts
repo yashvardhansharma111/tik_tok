@@ -7,14 +7,14 @@
  *   3. Connects Playwright, opens TikTok login
  *   4. Waits for manual login (user handles captcha)
  *   5. Captures session via native context.storageState() (no extensions needed)
- *   6. Saves to MongoDB (same gologin_accounts collection the upload runner reads)
+ *   6. Saves to MongoDB (same adspower_accounts collection the upload runner reads)
  *   7. Stops the browser
  *
  * Env:
  *   ADSPOWER_API_URL  (default http://127.0.0.1:50325)
  *   PROXY_HOST, PROXY_PORT, PROXY_BASE_USERNAME, PROXY_BASE_PASSWORD
  *   MONGODB_URI, MONGODB_DB
- *   GOLOGIN_ACCOUNTS_COLLECTION (default gologin_accounts)
+ *   ADSPOWER_ACCOUNTS_COLLECTION (default adspower_accounts)
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
@@ -207,7 +207,7 @@ export type AdsPowerCaptureOptions = {
  *
  * @param accountId  MongoDB _id from the legacy accounts collection
  * @param options    Optional overrides
- * @returns          The saved AccountDoc (in gologin_accounts)
+ * @returns          The saved AccountDoc (in adspower_accounts)
  */
 export async function captureViaAdsPower(
   accountId: string,
@@ -296,7 +296,7 @@ export async function captureViaAdsPower(
       // Step 7: country check
       const skipCountryCheck =
         options.skipCountryCheck === true ||
-        process.env.GOLOGIN_SKIP_COUNTRY_CHECK === "1";
+        process.env.SKIP_COUNTRY_CHECK === "1";
 
       if (!skipCountryCheck) {
         const expectedCountry = extractExpectedCountry(proxy.username);
@@ -345,7 +345,7 @@ export async function captureViaAdsPower(
         }
       }
 
-      // Step 10: save to MongoDB (same collection as GoLogin flow)
+      // Step 10: save to MongoDB (adspower_accounts collection)
       const now = new Date();
       const doc: AccountDoc = {
         accountId,
