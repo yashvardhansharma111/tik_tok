@@ -98,6 +98,18 @@ export async function createAdsPowerProfile(
     body: JSON.stringify({
       group_id: process.env.ADSPOWER_GROUP_ID || "0",
       name: profileName || undefined,
+      // Force desktop fingerprint — TikTok Studio doesn't work on mobile viewports.
+      // Without this, AdsPower may default to iPhone (especially on macOS).
+      fingerprint_config: {
+        automatic_timezone: "1",
+        language: ["en-US", "en"],
+        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        screen_resolution: "1920_1080",
+        fonts: [],
+        canvas: "1",
+        webgl: "3",
+        webgl_config: { unmasked_vendor: "Google Inc. (NVIDIA)", unmasked_renderer: "ANGLE (NVIDIA, NVIDIA GeForce GTX 1650)" },
+      },
       user_proxy_config: {
         proxy_soft: "other",
         proxy_type: "http",

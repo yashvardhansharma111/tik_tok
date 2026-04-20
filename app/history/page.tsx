@@ -26,7 +26,7 @@ export default function HistoryPage() {
     return toLocalDatetime(d);
   });
   const [appliedFrom, setAppliedFrom] = useState("");
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchHistory = useCallback(async (from?: string) => {
     const params = new URLSearchParams();
@@ -48,7 +48,9 @@ export default function HistoryPage() {
   useEffect(() => {
     fetchHistory(appliedFrom || undefined);
     pollRef.current = setInterval(() => fetchHistory(appliedFrom || undefined), 8000);
-    return () => clearInterval(pollRef.current);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [appliedFrom, fetchHistory]);
 
   const applyFilter = () => {
