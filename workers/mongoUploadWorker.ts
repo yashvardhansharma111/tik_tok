@@ -252,12 +252,11 @@ async function main() {
   await connectDB();
   ensureStorageJanitorStarted();
 
-  const batchSize = getUploadParallelAdminCap();
-  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 1400);
-  const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
+  const concurrency = getUploadParallelAdminCap();
+  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 500);
 
   const browser = await launchChromium("automation");
-  console.log("[MongoWorker] started", { batchSize, pollIntervalMs, batchGapMs });
+  console.log("[MongoWorker] started", { concurrency, pollIntervalMs });
 
   process.on("SIGTERM", async () => {
     console.log("[MongoWorker] SIGTERM received, closing…");
@@ -269,26 +268,42 @@ async function main() {
     process.exit(0);
   });
 
+  let active = 0;
+  let filling = false;
+  let pendingFill = false;
+
+  async function fillSlots() {
+    if (filling) {
+      pendingFill = true;
+      return;
+    }
+    filling = true;
+    pendingFill = false;
+    try {
+      while (active < concurrency) {
+        const want = concurrency - active;
+        const claimed = await claimUploadBatch(want, {
+          excludeAccountIds: [...busyAccountIds],
+        });
+        if (!claimed.length) break;
+        for (const job of claimed) {
+          busyAccountIds.add(String(job.accountId));
+          active++;
+          processOneUpload(job, browser).finally(() => {
+            busyAccountIds.delete(String(job.accountId));
+            active--;
+            fillSlots();
+          });
+        }
+      }
+    } finally {
+      filling = false;
+      if (pendingFill) fillSlots();
+    }
+  }
+
   while (true) {
-    const claimed = await claimUploadBatch(batchSize, {
-      excludeAccountIds: [...busyAccountIds],
-    });
-    if (!claimed.length) {
-      await sleep(pollIntervalMs);
-      continue;
-    }
-
-    for (const job of claimed) {
-      busyAccountIds.add(String(job.accountId));
-    }
-
-    const running = claimed.map((u: any) =>
-      processOneUpload(u, browser).finally(() => {
-        busyAccountIds.delete(String(u.accountId));
-      })
-    );
-    await Promise.allSettled(running);
-    if (batchGapMs > 0) await sleep(batchGapMs);
+    await fillSlots();
     await sleep(pollIntervalMs);
   }
 }

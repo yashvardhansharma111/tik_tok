@@ -15,8 +15,8 @@ export function makeUploadContextPoolKey(username: string, proxy?: ProxyKeyField
 const entries = new Map<string, BrowserContext>();
 
 function maxEntries(): number {
-  const n = Number(process.env.TIKTOK_UPLOAD_CONTEXT_POOL_MAX || 16);
-  return Number.isFinite(n) && n > 0 ? Math.min(64, Math.floor(n)) : 16;
+  const n = Number(process.env.TIKTOK_UPLOAD_CONTEXT_POOL_MAX || 128);
+  return Number.isFinite(n) && n > 0 ? Math.min(512, Math.floor(n)) : 128;
 }
 
 /** Remove and return a pooled context, or undefined. */

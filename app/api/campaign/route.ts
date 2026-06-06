@@ -15,7 +15,7 @@ import { CampaignModel } from "@/lib/models/Campaign";
 import { UploadModel } from "@/lib/models/Upload";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
 import { enqueueCampaignWave, shuffleVideoIndices } from "@/lib/campaignJobQueue";
-import { getUploadParallelAdminCap } from "@/lib/uploadParallelConfig";
+import { getUploadParallelAdminCap, UPLOAD_PARALLELISM_UI_MAX } from "@/lib/uploadParallelConfig";
 
 export const maxDuration = 600;
 export const runtime = "nodejs";
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       if (name === "musicQuery") musicQuerySingle = String(val ?? "").trim();
       if (name === "parallelism") {
         const n = Number.parseInt(String(val || "").trim(), 10);
-        if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(32, n));
+        if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(UPLOAD_PARALLELISM_UI_MAX, n));
       }
       if (name === "staggerSeconds") {
         const n = Number.parseFloat(String(val ?? "").trim());

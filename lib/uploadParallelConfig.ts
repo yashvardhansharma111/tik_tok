@@ -3,7 +3,7 @@
  * Server-wide ceiling is {@link getUploadParallelAdminCap} (env UPLOAD_PARALLEL_BATCH_SIZE).
  */
 
-export const UPLOAD_PARALLELISM_UI_MAX = 32;
+export const UPLOAD_PARALLELISM_UI_MAX = 100;
 
 /**
  * Max concurrent upload jobs claimed in one wave. Defaults to {@link UPLOAD_PARALLELISM_UI_MAX}
@@ -19,5 +19,5 @@ export function getUploadParallelAdminCap(): number {
   if (!Number.isFinite(n)) {
     return UPLOAD_PARALLELISM_UI_MAX;
   }
-  return Math.max(1, Math.min(UPLOAD_PARALLELISM_UI_MAX, Math.floor(n)));
+  return Math.max(1, Math.floor(n));
 }
