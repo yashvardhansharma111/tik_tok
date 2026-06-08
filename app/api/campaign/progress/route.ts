@@ -15,9 +15,17 @@ export async function GET() {
   const ownerId = (user as { _id: mongoose.Types.ObjectId })._id;
   const isAdmin = (user as { role?: string }).role === "admin";
 
-  const filter = isAdmin ? { status: { $in: ["active", "paused"] } } : { ownerId, status: { $in: ["active", "paused"] } };
+  // Include active/paused + recently completed (last 24 h) so the UI can offer Restart
+  const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const statusFilter = {
+    $or: [
+      { status: { $in: ["active", "paused"] } },
+      { status: "completed", updatedAt: { $gte: recentCutoff } },
+    ],
+  };
+  const filter = isAdmin ? statusFilter : { ownerId, ...statusFilter };
   const campaigns = await CampaignModel.find(filter)
-    .select("uploadId status accountIds videoRelPaths parallelism captionMode musicQuery repeatForever maxCycles cycle cycleGapSeconds waveStartAccountIndex accountsFinishedInWave createdAt")
+    .select("uploadId status accountIds videoRelPaths parallelism captionMode musicQuery repeatForever maxCycles cycle cycleGapSeconds waveStartAccountIndex accountsFinishedInWave createdAt updatedAt")
     .sort({ createdAt: -1 })
     .limit(20)
     .lean();

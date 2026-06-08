@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Browser } from "playwright";
-import { launchChromium } from "@/lib/playwrightLaunch";
 import mongoose from "mongoose";
 import path from "path";
 import fs from "fs/promises";
@@ -587,92 +585,50 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 }
 
 async function runnerLoop(signal: AbortSignal) {
-  const batchSize = getUploadParallelAdminCap();
-  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 1400);
-  const batchGapMs = Number(process.env.UPLOAD_BATCH_GAP_MS || 0);
+  const concurrency = getUploadParallelAdminCap();
+  const pollIntervalMs = Number(process.env.UPLOAD_POLL_INTERVAL_MS || 500);
 
   console.log("[MongoRunner] started", {
-    serverParallelCap: batchSize,
-    UPLOAD_PARALLEL_BATCH_SIZE: process.env.UPLOAD_PARALLEL_BATCH_SIZE ?? "(unset → 32)",
+    concurrency,
     pollIntervalMs,
-    batchGapMs,
-    hint: "Campaign 'Parallel accounts' cannot exceed serverParallelCap — set UPLOAD_PARALLEL_BATCH_SIZE in .env (e.g. 4) to allow N concurrent accounts per wave.",
+    hint: "Set UPLOAD_PARALLEL_BATCH_SIZE in .env to control max concurrent accounts.",
   });
 
-  while (!signal.aborted) {
-    const claimed = await claimUploadBatch(batchSize, {
-      excludeAccountIds: [...busyAccountIds],
-    });
-    if (!claimed.length) {
-      await sleep(pollIntervalMs);
-      continue;
-    }
+  let active = 0;
+  let filling = false;
+  let pendingFill = false;
 
-    for (const job of claimed) {
-      busyAccountIds.add(String(job.accountId));
-    }
-
-    const jobParallelism = Number((claimed[0] as any)?.parallelism) || batchSize;
-    /** Max simultaneous Chromium instances — defaults to wave size; set UPLOAD_MAX_BROWSERS in .env to cap. */
-    const maxBrowsers = Math.max(1, Number(process.env.UPLOAD_MAX_BROWSERS || claimed.length));
-    const oneBrowserPerJob = claimed.length > 1;
-
-    let waveBrowser: Browser | undefined;
-    if (!oneBrowserPerJob) {
-      waveBrowser = await launchChromium("automation");
-    }
-
-    console.log("[MongoRunner] wave claimed", {
-      concurrentJobsThisWave: claimed.length,
-      serverParallelCap: batchSize,
-      batchParallelismField: jobParallelism,
-      maxBrowsersConcurrent: oneBrowserPerJob ? maxBrowsers : 1,
-      uploadId: claimed[0]?.uploadId,
-      accountIds: claimed.map((c: any) => String(c.accountId)),
-      browserMode: oneBrowserPerJob
-        ? `isolated: each job launches its own Chromium (max ${maxBrowsers} concurrent)`
-        : "shared: one browser for this wave (closes after wave)",
-      fewerClaimsThanParallelism:
-        claimed.length < jobParallelism
-          ? "Some jobs not ready yet (notBefore in future), server cap, or no pending rows — if you use stagger>0 with parallelism=1 only, that is expected; with parallelism>1, intra-wave stagger is ignored."
-          : undefined,
-    });
-
-    const browserForJobs = waveBrowser || undefined;
-
-    if (oneBrowserPerJob && claimed.length > maxBrowsers) {
-      // Run in batches of maxBrowsers to avoid launching too many Chromium instances
-      for (let i = 0; i < claimed.length; i += maxBrowsers) {
-        const batch = claimed.slice(i, i + maxBrowsers);
-        const running = batch.map((job: any) =>
+  async function fillSlots() {
+    if (filling) { pendingFill = true; return; }
+    filling = true;
+    pendingFill = false;
+    try {
+      while (!signal.aborted && active < concurrency) {
+        const want = concurrency - active;
+        const claimed = await claimUploadBatch(want, { excludeAccountIds: [...busyAccountIds] });
+        if (!claimed.length) break;
+        for (const job of claimed) {
+          busyAccountIds.add(String(job.accountId));
+          active++;
           processUpload(job, undefined).finally(() => {
             busyAccountIds.delete(String(job.accountId));
-          })
-        );
-        await Promise.allSettled(running);
-        clearAllUploadContexts();
+            active--;
+            fillSlots();
+          });
+        }
       }
-    } else {
-      const running = claimed.map((job: any) =>
-        processUpload(job, browserForJobs).finally(() => {
-          busyAccountIds.delete(String(job.accountId));
-        })
-      );
-      await Promise.allSettled(running);
+    } finally {
+      filling = false;
+      if (pendingFill && !signal.aborted) fillSlots();
     }
+  }
 
-    // Close the wave browser and flush stale pooled contexts
-    clearAllUploadContexts();
-    if (waveBrowser) {
-      await waveBrowser.close().catch(() => {});
-      console.log("[MongoRunner] wave browser closed");
-    }
-
-    if (signal.aborted) break;
-    if (batchGapMs > 0) await sleep(batchGapMs);
+  while (!signal.aborted) {
+    await fillSlots();
     await sleep(pollIntervalMs);
   }
 
+  clearAllUploadContexts();
   console.log("[MongoRunner] stopped");
 }
 

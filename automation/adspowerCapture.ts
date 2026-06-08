@@ -151,9 +151,29 @@ export async function updateAdsPowerProxy(
 }
 
 /**
+ * AdsPower's local API rate-limits concurrent /browser/start requests (~5/sec).
+ * This promise chain serializes starts with a configurable gap between each call
+ * (ADSPOWER_START_STAGGER_MS, default 350ms) so bursts of parallel jobs don't hit
+ * "Too many request per second (code -1)".
+ */
+let _adsPowerStartChain: Promise<void> = Promise.resolve();
+
+function adsPowerStartStaggerMs(): number {
+  const n = Number(process.env.ADSPOWER_START_STAGGER_MS ?? 350);
+  return Number.isFinite(n) && n >= 0 ? n : 350;
+}
+
+/**
  * Start an AdsPower browser profile. Returns the WebSocket URL for Playwright CDP.
  */
 export async function startAdsPowerBrowser(profileId: string): Promise<AdsPowerStartResult> {
+  const gap = adsPowerStartStaggerMs();
+  const myTurn = _adsPowerStartChain.then(() =>
+    gap > 0 ? new Promise<void>(r => setTimeout(r, gap)) : Promise.resolve()
+  );
+  _adsPowerStartChain = myTurn.then(() => {}, () => {});
+  await myTurn;
+
   log("starting AdsPower browser", { profileId });
 
   const data = (await adspowerFetch(

@@ -72,6 +72,21 @@ export default function CampaignPage() {
     if (r.ok) fetchProgress();
   };
 
+  const restartCampaign = async (uploadId: string) => {
+    if (!confirm("Restart this campaign from cycle 1?")) return;
+    const r = await fetch("/api/campaign/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploadId }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      fetchProgress();
+    } else {
+      alert(data.error || "Restart failed");
+    }
+  };
+
   const stopAllCampaigns = async () => {
     if (!confirm(`Stop all ${activeCampaigns.length} active campaigns?`)) return;
     const r = await fetch("/api/campaign/stop", {
@@ -227,7 +242,7 @@ export default function CampaignPage() {
               className="flex flex-1 items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-left transition hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/60"
             >
               <span className="text-lg font-bold text-zinc-900 dark:text-white">
-                Active campaigns
+                Campaigns
                 <span className="ml-2 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-violet-600 px-1.5 text-[0.65rem] font-bold leading-none text-white">
                   {activeCampaigns.length}
                 </span>
@@ -236,7 +251,7 @@ export default function CampaignPage() {
                 ▼
               </span>
             </button>
-            {showCampaigns && (
+            {showCampaigns && activeCampaigns.some((c) => c.status !== "completed") && (
               <button
                 type="button"
                 onClick={stopAllCampaigns}
@@ -276,16 +291,30 @@ export default function CampaignPage() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                      c.status === "completed"
+                        ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                        : "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300"
+                    }`}>
                       {c.status}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => stopCampaign(c.uploadId)}
-                      className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700 transition hover:bg-red-600 hover:text-white dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-600 dark:hover:text-white"
-                    >
-                      Stop
-                    </button>
+                    {c.status === "completed" ? (
+                      <button
+                        type="button"
+                        onClick={() => restartCampaign(c.uploadId)}
+                        className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-600 hover:text-white dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-600 dark:hover:text-white"
+                      >
+                        Restart
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => stopCampaign(c.uploadId)}
+                        className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700 transition hover:bg-red-600 hover:text-white dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-600 dark:hover:text-white"
+                      >
+                        Stop
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -513,7 +542,7 @@ export default function CampaignPage() {
               <input
                 type="number"
                 min={1}
-                max={32}
+                max={100}
                 value={parallelism}
                 onChange={(e) => setParallelism(Number(e.target.value))}
                 className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
