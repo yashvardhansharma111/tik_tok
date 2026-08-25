@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Browser } from "playwright";
 import mongoose from "mongoose";
 import path from "path";
 import fs from "fs/promises";
