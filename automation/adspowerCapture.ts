@@ -36,7 +36,8 @@ import {
 
 // ---------- config ----------
 
-const ADSPOWER_BASE = () => (process.env.ADSPOWER_API_URL || "http://127.0.0.1:50325").replace(/\/+$/, "");
+const ADSPOWER_BASE = () => (process.env.ADSPOWER_API_URL || "http://local.adspower.net:50325").replace(/\/+$/, "");
+const ADSPOWER_API_KEY = () => process.env.ADSPOWER_API_KEY || "";
 const TIKTOK_LOGIN_URL = "https://www.tiktok.com/login";
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRIES = 2;
@@ -70,7 +71,9 @@ type AdsPowerStartResult = {
 };
 
 async function adspowerFetch(path: string, init?: RequestInit): Promise<unknown> {
-  const url = `${ADSPOWER_BASE()}${path}`;
+  const apiKey = ADSPOWER_API_KEY();
+  const separator = path.includes("?") ? "&" : "?";
+  const url = `${ADSPOWER_BASE()}${path}${apiKey ? `${separator}serial_number=${encodeURIComponent(apiKey)}` : ""}`;
   const res = await fetch(url, init);
   if (!res.ok) {
     throw new Error(`AdsPower API ${path} returned HTTP ${res.status}`);

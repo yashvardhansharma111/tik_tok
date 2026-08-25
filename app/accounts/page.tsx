@@ -50,6 +50,7 @@ export default function AccountsPage() {
     maxLinkedAccounts: number | null;
   } | null>(null);
   // ----- AdsPower one-click capture -----
+  const [resetBusy, setResetBusy] = useState(false);
   const [adspowerUsername, setAdspowerUsername] = useState("");
   const [adspowerBusy, setAdspowerBusy] = useState(false);
   const [adspowerRecaptureBusy, setAdspowerRecaptureBusy] = useState<string | null>(null);
@@ -275,6 +276,32 @@ export default function AccountsPage() {
       alert("AdsPower capture error: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setAdspowerBusy(false);
+    }
+  };
+
+  const resetToActive = async (accountIds?: string[]) => {
+    const isBulk = !accountIds || accountIds.length === 0;
+    const confirmed = isBulk
+      ? confirm(`Mark ALL ${expiredListTotal} expired accounts as active?\n\nOnly do this if you know the sessions are still valid in AdsPower (i.e. they were incorrectly marked expired by the health check).`)
+      : true;
+    if (!confirmed) return;
+    setResetBusy(true);
+    try {
+      const res = await fetch("/api/accounts/reset-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountIds: isBulk ? [] : accountIds }),
+      });
+      const data = await res.json() as { ok?: boolean; updated?: number; error?: string };
+      if (!res.ok) { alert(data.error || "Reset failed"); return; }
+      alert(`${data.updated ?? 0} account(s) marked as active.`);
+      void load({ page, pageSize });
+      void loadExpired({ page: expiredPage });
+      void loadAllAccounts();
+    } catch (e) {
+      alert("Reset error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -647,6 +674,21 @@ export default function AccountsPage() {
                 <div className="mb-4 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200">
                   These accounts have expired TikTok sessions. They won&apos;t appear in Upload or Campaign until
                   re-authenticated. Click <strong>Re-capture via AdsPower</strong> to open a browser and refresh the session.
+                  <br />
+                  <span className="mt-1 block text-amber-700 dark:text-amber-300">
+                    If accounts were incorrectly marked expired by the health check (e.g. AdsPower sessions are still valid),
+                    use <strong>Mark all as Active</strong> to restore them instantly.
+                  </span>
+                </div>
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    disabled={resetBusy}
+                    onClick={() => void resetToActive()}
+                    className="rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    {resetBusy ? "Resetting…" : `Mark all ${expiredListTotal} as Active`}
+                  </button>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                   <p className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -698,6 +740,14 @@ export default function AccountsPage() {
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={resetBusy}
+                          className="rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition hover:brightness-110 disabled:opacity-50"
+                          onClick={() => void resetToActive([a.id])}
+                        >
+                          Mark Active
+                        </button>
                         <button
                           type="button"
                           disabled={adspowerRecaptureBusy === a.id}

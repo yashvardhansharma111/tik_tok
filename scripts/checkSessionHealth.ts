@@ -89,7 +89,10 @@ async function checkOneAccount(
 
   try {
     if (!account.session || account.session.length < 10) {
-      return { id, username: account.username, previousStatus: account.status, currentStatus: "expired", changed: account.status !== "expired" };
+      // No session blob in DB — cannot verify. Keep previous status rather than incorrectly expiring.
+      process.stderr.write(`[check-health] ${account.username}: no session blob, keeping status=${account.status}\n`);
+      const prev = (account.status === "active" || account.status === "expired") ? account.status : "expired";
+      return { id, username: account.username, previousStatus: account.status, currentStatus: prev, changed: false };
     }
 
     fs.writeFileSync(tmpFile, account.session, "utf-8");
@@ -126,8 +129,11 @@ async function checkOneAccount(
     return { id, username: account.username, previousStatus: account.status, currentStatus, changed: account.status !== currentStatus };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[check-health] ${account.username}: error — ${msg}\n`);
-    return { id, username: account.username, previousStatus: account.status, currentStatus: "expired", changed: account.status !== "expired" };
+    process.stderr.write(`[check-health] ${account.username}: error (keeping previous status) — ${msg}\n`);
+    // On network/proxy/browser errors we cannot determine session validity.
+    // Keep the previous status rather than incorrectly marking active accounts as expired.
+    const prev = (account.status === "active" || account.status === "expired") ? account.status : "expired";
+    return { id, username: account.username, previousStatus: account.status, currentStatus: prev, changed: false };
   } finally {
     await context?.close().catch(() => {});
     await browser?.close().catch(() => {});
