@@ -37,7 +37,6 @@ import {
 // ---------- config ----------
 
 const ADSPOWER_BASE = () => (process.env.ADSPOWER_API_URL || "http://local.adspower.net:50325").replace(/\/+$/, "");
-const ADSPOWER_API_KEY = () => process.env.ADSPOWER_API_KEY || "";
 const TIKTOK_LOGIN_URL = "https://www.tiktok.com/login";
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRIES = 2;
@@ -71,9 +70,12 @@ type AdsPowerStartResult = {
 };
 
 async function adspowerFetch(path: string, init?: RequestInit): Promise<unknown> {
-  const apiKey = ADSPOWER_API_KEY();
-  const separator = path.includes("?") ? "&" : "?";
-  const url = `${ADSPOWER_BASE()}${path}${apiKey ? `${separator}serial_number=${encodeURIComponent(apiKey)}` : ""}`;
+  // NOTE: do NOT append the API key as `serial_number`. In the AdsPower Local API
+  // `serial_number` selects a *profile* (a small integer like "60"), it is not auth.
+  // Passing the API key there makes /api/v1/user/list return an empty list, and it
+  // only happens to be harmless on /browser/* because `user_id` takes precedence.
+  // The Local API needs no auth on the request itself.
+  const url = `${ADSPOWER_BASE()}${path}`;
   const res = await fetch(url, init);
   if (!res.ok) {
     throw new Error(`AdsPower API ${path} returned HTTP ${res.status}`);
@@ -270,6 +272,10 @@ export async function captureViaAdsPower(
   }
 
   let lastErr: Error | undefined;
+  // Once a manual login has been observed, later attempts must NOT wipe cookies —
+  // doing so destroys the login the user just completed and leaves the AdsPower
+  // profile signed out for good.
+  let loginObserved = false;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     log("attempt", { attempt, total: retries });
@@ -321,13 +327,17 @@ export async function captureViaAdsPower(
       // Step 4: clear stale cookies so detectLoginSuccess doesn't mistake
       // expired/leftover TikTok cookies for a valid session.
       // AdsPower's fingerprint (canvas, webgl, etc.) persists regardless.
-      try {
-        await context.clearCookies();
-        log("cleared stale cookies for fresh login");
-      } catch (e) {
-        warn("could not clear cookies (continuing)", {
-          error: (e as Error).message,
-        });
+      if (loginObserved) {
+        log("skipping cookie clear — a login was already completed this run");
+      } else {
+        try {
+          await context.clearCookies();
+          log("cleared stale cookies for fresh login");
+        } catch (e) {
+          warn("could not clear cookies (continuing)", {
+            error: (e as Error).message,
+          });
+        }
       }
 
       // Step 5: navigate to TikTok login
@@ -343,6 +353,7 @@ export async function captureViaAdsPower(
 
       // Step 6: wait for manual login — always wait, never skip
       await waitForManualLogin(page, loginTimeoutMs);
+      loginObserved = true;
 
       // Step 7: country check
       const skipCountryCheck =

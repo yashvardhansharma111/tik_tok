@@ -2,6 +2,13 @@
  * Groq-backed TikTok caption generation (shared by /api/ai/caption/generate and batch upload).
  */
 
+import {
+  resolveGroqModel,
+  groqRequestExtras,
+  DEFAULT_GROQ_MODEL,
+  FALLBACK_GROQ_MODEL,
+} from "./groqModel";
+
 export function cleanCaption(text: string) {
   let s = text.trim();
   s = s.replace(/^["']+/, "").replace(/["']+$/, "").trim();
@@ -25,8 +32,7 @@ export async function generateTikTokCaption(
     throw new Error("Missing GROQ_API_KEY in environment variables");
   }
 
-  const defaultModel = "llama-3.1-8b-instant";
-  const model = process.env.GROQ_MODEL || defaultModel;
+  const model = resolveGroqModel();
 
   const vi = options?.variationIndex;
   const vt = options?.variationTotal;
@@ -71,7 +77,7 @@ Return ONLY the caption text (no quotes), 1-2 short sentences, 3-5 hashtags at t
           { role: "user", content: userMessage },
         ],
         temperature,
-        max_tokens: 180,
+        ...groqRequestExtras(useModel, 180),
       }),
     });
     return resp;
@@ -81,18 +87,10 @@ Return ONLY the caption text (no quotes), 1-2 short sentences, 3-5 hashtags at t
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
-    if (errText.includes("model_decommissioned")) {
+    if (/model_decommissioned|model_not_found/.test(errText)) {
       const fallbackModel =
-        model === "llama3-8b-8192"
-          ? "llama-3.1-8b-instant"
-          : model === "llama3-70b-8192"
-            ? "llama-3.3-70b-versatile"
-            : defaultModel;
-      if (fallbackModel !== model) {
-        resp = await run(fallbackModel);
-      } else {
-        throw new Error(errText.slice(0, 300));
-      }
+        model === FALLBACK_GROQ_MODEL ? DEFAULT_GROQ_MODEL : FALLBACK_GROQ_MODEL;
+      resp = await run(fallbackModel);
     } else {
       throw new Error(errText.slice(0, 300) || "Groq request failed");
     }

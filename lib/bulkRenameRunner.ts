@@ -8,6 +8,7 @@ import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
 import { randomUsernameSuffix, sanitizeTikTokUsername } from "@/lib/tiktokUsername";
 import { renameLog } from "@/lib/renameDebugLog";
 import mongoose from "mongoose";
+import { resolveGroqModel, groqRequestExtras } from "./groqModel";
 
 function extractExampleUsernamesFromPrompt(prompt: string): string[] {
   const tokens = (prompt || "")
@@ -135,7 +136,7 @@ async function groqGenerateTikTokUsernames(prompt: string, labels: string[]): Pr
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) throw new Error("Missing GROQ_API_KEY");
 
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model = resolveGroqModel();
   const forbiddenList = labels.map((h) => sanitizeTikTokUsername(h)).join(", ");
   const sys = `You invent NEW TikTok usernames (handles). You are renaming accounts — the output MUST be different from what exists today.
 
@@ -167,7 +168,7 @@ Return a JSON array of exactly ${n} brand-new candidate usernames, position i fo
         { role: "user", content: user },
       ],
       temperature: 0.9,
-      max_tokens: 700,
+      ...groqRequestExtras(model, 700),
     }),
   });
 
@@ -245,7 +246,7 @@ async function groqGenerateAlternativeUsername(
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) return null;
 
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model = resolveGroqModel();
   const forbiddenJson = JSON.stringify([...triedLower]);
 
   const examplesHint = promptExamples.length > 0
@@ -276,7 +277,7 @@ Invent ONE brand-new username that is a slight variation (number swap, abbreviat
           { role: "user", content: user },
         ],
         temperature: 0.7,
-        max_tokens: 60,
+        ...groqRequestExtras(model, 60),
       }),
     });
 
