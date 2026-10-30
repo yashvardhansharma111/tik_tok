@@ -12,6 +12,7 @@ import { buildStickyProxyForAccount } from "../lib/proxyPlaywright";
 import { ensureStorageJanitorStarted } from "../lib/storageJanitor";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 import mongoose from "mongoose";
+import { resolveMusicMode } from "@/lib/musicMode";
 
 let browserInstance: import("playwright").Browser | null = null;
 async function getBrowser() {
@@ -67,7 +68,7 @@ async function cleanupBatchIfLast(videoPath: string, uploadId: string) {
 }
 
 async function processUpload(job: Job<UploadJobPayload>) {
-  const { uploadId, accountId, username, session, proxy, videoPath, caption, musicQuery } = job.data;
+  const { uploadId, accountId, username, session, proxy, videoPath, caption, musicQuery, musicMode } = job.data;
   const maxAttempts = typeof job.opts?.attempts === "number" ? job.opts.attempts : 2;
   const shouldRetryAfterThis = job.attemptsMade + 1 < maxAttempts;
   const attemptNumber = job.attemptsMade + 1;
@@ -119,7 +120,8 @@ async function processUpload(job: Job<UploadJobPayload>) {
       caption,
       proxyConfig,
       activeBrowser,
-      musicQuery
+      musicQuery,
+      { musicMode: resolveMusicMode(musicMode, musicQuery) }
     );
 
     if (result.success) {

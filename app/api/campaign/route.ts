@@ -16,6 +16,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
 import { enqueueCampaignWave, shuffleVideoIndices } from "@/lib/campaignJobQueue";
 import { getUploadParallelAdminCap, UPLOAD_PARALLELISM_UI_MAX } from "@/lib/uploadParallelConfig";
+import { resolveMusicMode } from "@/lib/musicMode";
 
 export const maxDuration = 600;
 export const runtime = "nodejs";
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
     /** Legacy: JSON array from old clients; first non-empty line used if `musicQuery` absent */
     let musicQueries: string[] = [];
     let musicQuerySingle = "";
+    let musicModeRaw = "";
     let parallelism = 5;
     let staggerSeconds = 0;
     let cycleGapSeconds = 60;
@@ -91,6 +93,7 @@ export async function POST(request: Request) {
         }
       }
       if (name === "musicQuery") musicQuerySingle = String(val ?? "").trim();
+      if (name === "musicMode") musicModeRaw = String(val ?? "").trim();
       if (name === "parallelism") {
         const n = Number.parseInt(String(val || "").trim(), 10);
         if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(UPLOAD_PARALLELISM_UI_MAX, n));
@@ -234,6 +237,7 @@ export async function POST(request: Request) {
     const legacyMusicFirst =
       musicQueries.map((s) => String(s ?? "").trim()).find(Boolean) || "";
     const musicQueryFinal = (musicQuerySingle || legacyMusicFirst).trim();
+    const musicMode = resolveMusicMode(musicModeRaw, musicQueryFinal);
     captions = captions.map((c) => {
       const t = String(c ?? "").trim();
       return t || "TikTok post";
@@ -279,6 +283,7 @@ export async function POST(request: Request) {
       videoRelPaths,
       captions,
       ...(musicQueryFinal ? { musicQuery: musicQueryFinal } : {}),
+      musicMode,
       musicQueries: [],
       perAccountVideoOrder,
       captionMode,

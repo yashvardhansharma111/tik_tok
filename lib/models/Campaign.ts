@@ -12,6 +12,8 @@ const CampaignSchema = new Schema(
     captions: [{ type: String, required: true }],
     /** One TikTok sound search for every video in the campaign (preferred). */
     musicQuery: { type: String, required: false },
+    /** "trending" | "search" | "none"; absent on pre-existing campaigns. */
+    musicMode: { type: String, required: false },
     /** @deprecated legacy per-line sound; use `musicQuery` */
     musicQueries: [{ type: String, required: false }],
     /** Per account: permutation of indices into videoRelPaths (shuffle or identity). */
@@ -42,6 +44,7 @@ export type CampaignDoc = {
   videoRelPaths: string[];
   captions: string[];
   musicQuery?: string | null;
+  musicMode?: string | null;
   musicQueries?: string[];
   perAccountVideoOrder: number[][];
   captionMode: "same" | "per_video" | "ai_unique_each";

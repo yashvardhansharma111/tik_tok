@@ -1,5 +1,6 @@
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import type { MusicMode } from "./musicMode";
 
 const QUEUE_NAME = process.env.UPLOAD_QUEUE_NAME || "tiktok-upload";
 
@@ -24,6 +25,7 @@ export type UploadJobPayload = {
   videoPath: string;
   caption: string;
   musicQuery?: string;
+  musicMode?: MusicMode;
   uploadDocId?: string;
 };
 

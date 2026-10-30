@@ -18,6 +18,7 @@ import {
   setCachedSound,
   type CachedSoundEntry,
 } from "@/lib/soundCache";
+import { resolveMusicMode, effectiveSoundQuery, type MusicMode } from "@/lib/musicMode";
 import {
   getHumanTimingScale,
   getMusicTimingScale,
@@ -2764,6 +2765,8 @@ export type RunUploadSessionOptions = {
    * Caller must call `poolSessionHandleAfterUploadChain` when done or `discardUploadSessionHandle` on failure.
    */
   holdSessionForChain?: boolean;
+  /** How to handle the sound step; omitted means infer from `musicQuery` (legacy behaviour). */
+  musicMode?: MusicMode;
 };
 
 export type TikTokUploadRunResult = {
@@ -2796,7 +2799,8 @@ export async function runStudioUploadPipeline(
   videoPath: string,
   caption: string,
   musicQuery: string | undefined,
-  username: string
+  username: string,
+  musicMode?: MusicMode
 ): Promise<TikTokUploadRunResult> {
   let soundUsed: string | undefined;
 
@@ -2848,16 +2852,18 @@ export async function runStudioUploadPipeline(
   await ctx.pauseIfDebug(page, "after caption filled");
   await humanScroll(page);
 
-  const effectiveMusicQuery = musicQuery?.trim() || "trending";
+  const mode = resolveMusicMode(musicMode, musicQuery);
+  const effectiveMusicQuery = effectiveSoundQuery(mode, musicQuery);
   if (effectiveMusicQuery) {
-    if (musicQuery?.trim()) {
-      ctx.flow(`music: musicQuery set → try sound picker (${effectiveMusicQuery.slice(0, 60)}…)`);
+    if (mode === "search") {
+      ctx.flow(`music: search mode → try sound picker (${effectiveMusicQuery.slice(0, 60)}…)`);
     } else {
-      ctx.flow(`music: no musicQuery provided — using default (${effectiveMusicQuery})`);
+      ctx.flow(`music: trending mode — using default (${effectiveMusicQuery})`);
     }
     soundUsed = await tryAddSoundToVideo(page, effectiveMusicQuery, ctx, username);
   } else {
-    ctx.flow("music: no musicQuery — skip sound selection");
+    // mode === "none": leave the video's own audio alone and never open Add sound.
+    ctx.flow("music: own-sound mode — skipping sound selection entirely");
   }
 
   const tPostPhase = Date.now();
@@ -3135,7 +3141,7 @@ export async function runUploadWithSession(
       await ctx.shot(page, "step-1-open-page.png");
     }
 
-    const pipelineResult = await runStudioUploadPipeline(page, ctx, videoPath, caption, musicQuery, username);
+    const pipelineResult = await runStudioUploadPipeline(page, ctx, videoPath, caption, musicQuery, username, sessionOptions?.musicMode);
     soundUsed = pipelineResult.soundUsed;
     return done(pipelineResult);
   } catch (e) {

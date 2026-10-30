@@ -1,3 +1,5 @@
+import type { MusicMode } from "./musicMode";
+
 /** Legacy JSON manifest under storage/accounts.json (cookie file paths). */
 export interface FileBackedAccount {
   id: string;
@@ -24,6 +26,7 @@ export interface UploadHistoryItem {
   videoFileName: string;
   caption: string;
   musicQuery?: string;
+  musicMode?: MusicMode;
   soundUsed?: string;
   status: "pending" | "uploading" | "success" | "failed";
   error?: string;

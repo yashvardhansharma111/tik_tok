@@ -14,6 +14,7 @@ import { AccountModel } from "@/lib/models/Account";
 import { UploadModel } from "@/lib/models/Upload";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
 import { generateTikTokCaption } from "@/lib/aiCaption";
+import { resolveMusicMode } from "@/lib/musicMode";
 
 export const maxDuration = 600;
 export const runtime = "nodejs";
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
 
     let caption = "";
     let musicQuery = "";
+    let musicModeRaw = "";
     let accountIds: string[] = [];
     let parallelism = 4;
     let staggerSeconds = 0;
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
     busboy.on("field", (name: string, val: string) => {
       if (name === "caption") caption = val;
       if (name === "musicQuery") musicQuery = val;
+      if (name === "musicMode") musicModeRaw = val;
       if (name === "parallelism") {
         const n = Number.parseInt(String(val || "").trim(), 10);
         if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(32, n));
@@ -182,12 +185,14 @@ export async function POST(request: Request) {
     );
 
     const normalizedMusicQuery = musicQuery.trim();
+    const musicMode = resolveMusicMode(musicModeRaw, normalizedMusicQuery);
     const normalizedParallelism = Math.max(1, Math.min(32, Number(parallelism || 4)));
     console.log("[UploadAPI] parsed request", {
       uploadId,
       accountCount: accountIds.length,
       hasMusicQuery: normalizedMusicQuery.length > 0,
       musicQuery: normalizedMusicQuery || "(none)",
+      musicMode,
       parallelism: normalizedParallelism,
       staggerSeconds,
       scheduledStartAt: hasSchedule ? scheduledStartAt : "(immediate)",
@@ -242,6 +247,7 @@ export async function POST(request: Request) {
         videoFileName: videoDisplayName,
         caption: rowCaption,
         ...(normalizedMusicQuery ? { musicQuery: normalizedMusicQuery } : {}),
+        musicMode,
         status: "pending",
         timestamp: new Date(),
         notBefore,
@@ -258,6 +264,7 @@ export async function POST(request: Request) {
       processed: uploadDocs.length,
       uploadId,
       musicQuery: normalizedMusicQuery || null,
+      musicMode,
       parallelism: normalizedParallelism,
       staggerSeconds,
       scheduledStartAt: hasSchedule ? scheduledStartAt : null,

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
+import type { MusicMode } from "@/lib/musicMode";
 
 type Account = { id: string; username: string; hasSession?: boolean; status?: string };
 
@@ -40,6 +41,7 @@ export default function CampaignPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [captions, setCaptions] = useState("");
   const [musicQuery, setMusicQuery] = useState("");
+  const [musicMode, setMusicMode] = useState<MusicMode>("trending");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [parallelism, setParallelism] = useState(5);
   const [staggerSeconds, setStaggerSeconds] = useState(0);
@@ -191,8 +193,9 @@ export default function CampaignPage() {
     } else {
       form.append("captions", JSON.stringify(capLines.length ? capLines : [captions.trim()]));
     }
+    form.append("musicMode", musicMode);
     const mq = musicQuery.trim();
-    if (mq) form.append("musicQuery", mq);
+    if (musicMode === "search" && mq) form.append("musicQuery", mq);
 
     form.append("parallelism", String(parallelism));
     form.append("staggerSeconds", String(staggerSeconds));
@@ -481,16 +484,44 @@ export default function CampaignPage() {
               value={captions}
               onChange={(e) => setCaptions(e.target.value)}
             />
-            <input
-              type="text"
-              className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              placeholder="Optional: one TikTok sound search for every video in this campaign"
-              value={musicQuery}
-              onChange={(e) => setMusicQuery(e.target.value)}
-              autoComplete="off"
-            />
+            <div className="grid gap-2 sm:grid-cols-3">
+              {(
+                [
+                  { id: "trending", label: "Trending sound", hint: "Pick a trending track" },
+                  { id: "search", label: "Search a sound", hint: "One sound for the campaign" },
+                  { id: "none", label: "Keep my own sound", hint: "Use each video's own audio" },
+                ] as { id: MusicMode; label: string; hint: string }[]
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setMusicMode(opt.id)}
+                  aria-pressed={musicMode === opt.id}
+                  className={`rounded-xl border px-4 py-3 text-left transition ${
+                    musicMode === opt.id
+                      ? "border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-500 dark:bg-teal-950/40"
+                      : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                  }`}
+                >
+                  <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">{opt.label}</span>
+                  <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+            {musicMode === "search" && (
+              <input
+                type="text"
+                className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                placeholder="TikTok sound search for every video in this campaign"
+                value={musicQuery}
+                onChange={(e) => setMusicQuery(e.target.value)}
+                autoComplete="off"
+              />
+            )}
             <p className="text-[0.7rem] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              Leave empty to use the uploader default (<strong>trending</strong>). The same sound applies to all videos and all accounts in the campaign.
+              {musicMode === "none"
+                ? "Add sound is skipped — every video posts with its own original audio."
+                : "The same sound applies to all videos and all accounts in the campaign."}
             </p>
           </div>
         </section>

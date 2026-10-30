@@ -20,6 +20,7 @@ import { ensureStorageJanitorStarted } from "../lib/storageJanitor";
 import { isSessionExpiredError, markAccountExpiredIfSessionError } from "../lib/accountSessionExpiry";
 import { afterCampaignUploadSuccess } from "../lib/campaignJobQueue";
 import { tryCleanupUploadBatch } from "../lib/tmpUploadCleanup";
+import { resolveMusicMode } from "@/lib/musicMode";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -137,11 +138,16 @@ async function processOneUpload(initialUpload: any, browser: import("playwright"
         typeof updated.musicQuery === "string" && updated.musicQuery.trim()
           ? updated.musicQuery.trim()
           : undefined;
+      const musicMode = resolveMusicMode((updated as any).musicMode, musicQuery);
 
       const videoForUpload = await resolveOptimizedVideoPath(videoPath);
 
-      const sessionOpts =
-        chainEnabled && browser ? { reuse: sessionHandle, holdSessionForChain: true as const } : undefined;
+      const sessionOpts = {
+        ...(chainEnabled && browser
+          ? { reuse: sessionHandle, holdSessionForChain: true as const }
+          : {}),
+        musicMode,
+      };
 
       const result = await runUploadWithSession(
         (accountDoc as any).username,

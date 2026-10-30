@@ -5,6 +5,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { CampaignModel } from "@/lib/models/Campaign";
 import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
 import { generateTikTokCaption } from "@/lib/aiCaption";
+import { resolveMusicMode } from "./musicMode";
 
 /** Single sound search for the whole campaign; falls back to first legacy `musicQueries` entry. */
 export function campaignSoundSearch(c: {
@@ -124,6 +125,7 @@ export async function enqueueCampaignWave(campaignLean: any): Promise<void> {
         ? await maybeAiCaption(c, vidIdx, String(accId))
         : captionForVideo(c, vidIdx);
     const musicQuery = campaignSoundSearch(c);
+    const musicMode = resolveMusicMode((c as { musicMode?: unknown }).musicMode, musicQuery);
 
     const notBeforeMs = parallelWave ? baseMs : baseMs + (i - start) * staggerMs;
 
@@ -137,6 +139,7 @@ export async function enqueueCampaignWave(campaignLean: any): Promise<void> {
       videoFileName: path.basename(rel),
       caption,
       ...(musicQuery ? { musicQuery } : {}),
+      musicMode,
       status: "pending",
       notBefore: new Date(notBeforeMs),
       parallelism: P,
@@ -180,6 +183,7 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
         ? await maybeAiCaption(c, vidIdx, accountId)
         : captionForVideo(c, vidIdx);
     const musicQuery = campaignSoundSearch(c);
+    const musicMode = resolveMusicMode((c as { musicMode?: unknown }).musicMode, musicQuery);
 
     await UploadModel.create({
       ownerId: c.ownerId,
@@ -191,6 +195,7 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
       videoFileName: path.basename(rel),
       caption,
       ...(musicQuery ? { musicQuery } : {}),
+      musicMode,
       status: "pending",
       notBefore: new Date(),
       parallelism: c.parallelism,

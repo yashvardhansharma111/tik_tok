@@ -21,6 +21,7 @@ import { isSessionExpiredError, markAccountExpiredIfSessionError } from "@/lib/a
 import { uploadViaAdsPower } from "@/automation/adspowerUpload";
 import { afterCampaignUploadSuccess, afterCampaignJobPermanentFail } from "@/lib/campaignJobQueue";
 import { tryCleanupUploadBatch } from "@/lib/tmpUploadCleanup";
+import { resolveMusicMode } from "./musicMode";
 
 /** Single runner + abort handle survives Next.js HMR better than module-local flags alone. */
 const RUNNER_SINGLETON_KEY = "__mongoUploadRunnerSingleton_v1";
@@ -340,6 +341,9 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
           ? updated.musicQuery.trim()
           : undefined;
 
+      // Legacy rows have no musicMode — resolveMusicMode infers the old behaviour.
+      const musicMode = resolveMusicMode((updated as any).musicMode, musicQuery);
+
       const attemptNumber: number = updated.attempts || 1;
 
       // CRITICAL: if the account came from adspower_accounts, use its stored proxy directly.
@@ -371,6 +375,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         username: (accountDoc as any).username,
         attemptNumber,
         musicQuery: musicQuery || "(none)",
+        musicMode,
         chained: Boolean(sessionHandle),
         via: useAdsPower ? "adspower" : "playwright",
         ...(useAdsPower ? { adspowerProfileId: capturedAccount!.adspowerProfileId } : {}),
@@ -395,6 +400,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
           videoPath: videoForUpload,
           caption,
           musicQuery,
+          musicMode,
         });
 
         // If AdsPower detected session expired, mark account as logged_out immediately
@@ -426,10 +432,12 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         }
 
         /** Chain reuse depends on sessionHandle from the previous step, not on the runner’s shared Browser. */
-        const sessionOpts =
-          chainEnabled && sessionHandle
+        const sessionOpts = {
+          ...(chainEnabled && sessionHandle
             ? { reuse: sessionHandle, holdSessionForChain: true as const }
-            : undefined;
+            : {}),
+          musicMode,
+        };
 
         result = await runUploadWithSession(
           (accountDoc as any).username,

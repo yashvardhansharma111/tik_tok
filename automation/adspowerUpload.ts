@@ -28,6 +28,7 @@ import {
 } from "./uploadWorker";
 import { isTikTokSessionLoggedOut } from "@/lib/tiktokSessionHealth";
 import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
+import type { MusicMode } from "@/lib/musicMode";
 
 // ---------- types ----------
 
@@ -37,6 +38,7 @@ export type AdsPowerUploadOptions = {
   videoPath: string;
   caption: string;
   musicQuery?: string;
+  musicMode?: MusicMode;
 };
 
 export type AdsPowerUploadResult = {
@@ -80,7 +82,7 @@ function warn(msg: string, extra?: Record<string, unknown>) {
 export async function uploadViaAdsPower(
   opts: AdsPowerUploadOptions
 ): Promise<AdsPowerUploadResult> {
-  const { adspowerProfileId, username, videoPath, caption, musicQuery } = opts;
+  const { adspowerProfileId, username, videoPath, caption, musicQuery, musicMode } = opts;
   const ctx = createFlowContext(username);
 
   let browser: Browser | undefined;
@@ -154,7 +156,8 @@ export async function uploadViaAdsPower(
       videoPath,
       caption,
       musicQuery,
-      username
+      username,
+      musicMode
     );
 
     log(result.success ? "upload success" : "upload failed", {

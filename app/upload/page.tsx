@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { AccountsListExplain } from "@/components/AccountsListExplain";
 import { logAccountsListLoaded } from "@/lib/accountsListMeta";
 import { fetchAllAccountsForSelectors } from "@/lib/fetchAccountsClient";
+import { describeMusicMode, type MusicMode } from "@/lib/musicMode";
 
 type Account = { id: string; username: string; hasSession?: boolean; status?: string };
 
@@ -25,6 +26,7 @@ export default function UploadPage() {
   } | null>(null);
   const [caption, setCaption] = useState("");
   const [musicQuery, setMusicQuery] = useState("");
+  const [musicMode, setMusicMode] = useState<MusicMode>("trending");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [parallelism, setParallelism] = useState(4);
@@ -152,7 +154,10 @@ export default function UploadPage() {
     const form = new FormData();
     form.append("video", file);
     form.append("caption", caption);
-    if (musicQuery.trim()) form.append("musicQuery", musicQuery.trim());
+    form.append("musicMode", musicMode);
+    if (musicMode === "search" && musicQuery.trim()) {
+      form.append("musicQuery", musicQuery.trim());
+    }
     form.append("accountIds", JSON.stringify([...selected]));
     form.append("parallelism", String(parallelism));
     form.append("staggerSeconds", String(staggerSeconds));
@@ -185,7 +190,7 @@ export default function UploadPage() {
       res.ok
         ? `Started upload to ${data.processed} account(s) with parallelism=${data.parallelism || parallelism}. ${
             uniqueCaptionPerAccount ? "Unique AI captions were generated per account. " : ""
-          }Music query: ${data.musicQuery || "default (trending)"}. Progress updates below.`
+          }Sound: ${describeMusicMode(data.musicMode || musicMode, data.musicQuery)}. Progress updates below.`
         : data.error || "Upload failed"
     );
   };
@@ -270,20 +275,60 @@ export default function UploadPage() {
             onChange={(e) => setCaption(e.target.value)}
           />
 
-          <label className="mt-4 block">
+          <div className="mt-4">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Sound search (optional)
+              Sound
             </span>
-            <input
-              className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 shadow-inner outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-teal-500"
-              placeholder='e.g. "Cupid - Fifty Fifty" or "trending"'
-              value={musicQuery}
-              onChange={(e) => setMusicQuery(e.target.value)}
-            />
-            <span className="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">
-              If set, automation opens Add sound, searches, and picks the first matching result before Post.
-            </span>
-          </label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {(
+                [
+                  { id: "trending", label: "Trending sound", hint: "Automation picks a trending track" },
+                  { id: "search", label: "Search a sound", hint: "Find a specific TikTok sound" },
+                  { id: "none", label: "Keep my own sound", hint: "Post with the video's original audio" },
+                ] as { id: MusicMode; label: string; hint: string }[]
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setMusicMode(opt.id)}
+                  aria-pressed={musicMode === opt.id}
+                  className={`rounded-xl border px-4 py-3 text-left transition ${
+                    musicMode === opt.id
+                      ? "border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-500 dark:bg-teal-950/40"
+                      : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                  }`}
+                >
+                  <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    {opt.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                    {opt.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {musicMode === "search" && (
+              <label className="mt-3 block">
+                <input
+                  className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 shadow-inner outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-teal-500"
+                  placeholder='e.g. "Cupid - Fifty Fifty"'
+                  value={musicQuery}
+                  onChange={(e) => setMusicQuery(e.target.value)}
+                />
+                <span className="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">
+                  Automation opens Add sound, searches, and picks the best matching result before Post.
+                  Leave blank to fall back to a trending sound.
+                </span>
+              </label>
+            )}
+
+            {musicMode === "none" && (
+              <span className="mt-2 block text-xs text-zinc-500 dark:text-zinc-400">
+                Add sound is skipped entirely — the video posts with whatever audio it already has.
+              </span>
+            )}
+          </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <input

@@ -9,6 +9,7 @@ import { CampaignModel } from "@/lib/models/Campaign";
 import { UploadModel } from "@/lib/models/Upload";
 import { campaignSoundSearch, enqueueCampaignWave } from "@/lib/campaignJobQueue";
 import { ensureMongoUploadRunnerStarted } from "@/lib/mongoUploadRunner";
+import { resolveMusicMode } from "@/lib/musicMode";
 
 function captionFor(campaign: any, vidIdx: number): string {
   const captions = campaign.captions as string[];
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
   const videoRelPaths = (campaign.videoRelPaths || []) as string[];
   const perAccountVideoOrder = (campaign.perAccountVideoOrder || []) as number[][];
   const musicQuery = campaignSoundSearch(campaign);
+  const musicMode = resolveMusicMode((campaign as { musicMode?: unknown }).musicMode, musicQuery);
 
   // Drop only non-successful jobs — keep success records to know what's already done
   await UploadModel.deleteMany({
@@ -102,6 +104,7 @@ export async function POST(request: Request) {
       videoFileName: path.basename(rel),
       caption,
       ...(musicQuery ? { musicQuery } : {}),
+      musicMode,
       status: "pending",
       notBefore: new Date(),
       parallelism: P,
