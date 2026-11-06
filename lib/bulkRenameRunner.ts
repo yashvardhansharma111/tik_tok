@@ -5,6 +5,7 @@ import { AccountModel } from "@/lib/models/Account";
 import { RenameJobModel } from "@/lib/models/RenameJob";
 import { renameTikTokUsername, TIKTOK_USERNAME_30_DAY_COOLDOWN_ERROR } from "@/automation/renameTikTokUsername";
 import { buildStickyProxyForAccount } from "@/lib/proxyPlaywright";
+import { renameViaAdsPower } from "@/automation/adspowerRename";
 import { randomUsernameSuffix, sanitizeTikTokUsername } from "@/lib/tiktokUsername";
 import { renameLog } from "@/lib/renameDebugLog";
 import mongoose from "mongoose";
@@ -324,6 +325,18 @@ async function isHandleFreeForAccount(
   return { ok: true };
 }
 
+/** The AdsPower profile bound to this account, if it was captured through AdsPower. */
+async function findAdsPowerProfileId(accountId: string): Promise<string | null> {
+  try {
+    const col = process.env.ADSPOWER_ACCOUNTS_COLLECTION || "adspower_accounts";
+    const doc = await mongoose.connection.collection(col).findOne({ accountId });
+    const id = (doc as { adspowerProfileId?: unknown } | null)?.adspowerProfileId;
+    return typeof id === "string" && id.trim() ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveAccountUsername(accountId: mongoose.Types.ObjectId, newUsername: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const existing = await AccountModel.findById(accountId).select({ username: 1, previousUsername: 1 }).lean() as any;
@@ -402,7 +415,11 @@ async function runBulkRenameJob(jobId: string) {
       );
 
       const acc = await AccountModel.findById(item.accountId).lean();
-      if (!acc || !acc.session) {
+      // Prefer the account's AdsPower profile: same fingerprint + proxy as the
+      // login, and it carries real cookies (the legacy accounts.session row is
+      // only a placeholder for AdsPower-captured accounts).
+      const adspowerProfileId = acc ? await findAdsPowerProfileId(String(item.accountId)) : null;
+      if (!acc || (!acc.session && !adspowerProfileId)) {
         await RenameJobModel.updateOne(
           { _id: jobId, "items.accountId": item.accountId },
           { $set: { "items.$.status": "failed", "items.$.error": "No session" } }
@@ -433,6 +450,7 @@ async function runBulkRenameJob(jobId: string) {
         dbUsername: acc.username,
         accountId: String(item.accountId),
         hasSession: Boolean(acc.session?.length),
+        adspowerProfileId: adspowerProfileId || "(none — falling back to standalone Playwright)",
       });
 
       /** Generate a batch of candidates to try inside one browser session. */
@@ -511,13 +529,20 @@ async function runBulkRenameJob(jobId: string) {
 
         renameLog("attempt_batch", { round: round + 1, max: MAX_TIKTOK_USERNAME_ATTEMPTS, candidates: freeBatch });
 
-        const r = await renameTikTokUsername({
-          sessionJson: acc.session,
-          currentUsername: acc.username,
-          newUsername: freeBatch[0],
-          fallbackCandidates: freeBatch.slice(1),
-          proxy,
-        });
+        const r = adspowerProfileId
+          ? await renameViaAdsPower({
+              adspowerProfileId,
+              currentUsername: acc.username,
+              newUsername: freeBatch[0],
+              fallbackCandidates: freeBatch.slice(1),
+            })
+          : await renameTikTokUsername({
+              sessionJson: acc.session,
+              currentUsername: acc.username,
+              newUsername: freeBatch[0],
+              fallbackCandidates: freeBatch.slice(1),
+              proxy,
+            });
 
         triedCandidates.push(...(r.triedUnavailable || []));
         const applied = r.appliedCandidate || freeBatch[0];

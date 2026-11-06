@@ -505,7 +505,7 @@ async function verifyNewUsernameOnTikTok(
   };
 }
 
-type RenameMultiResult = RenameUsernameResult & {
+export type RenameMultiResult = RenameUsernameResult & {
   /** Which candidate actually succeeded (so the runner knows which name was applied). */
   appliedCandidate?: string;
   /** Names that were tried and confirmed unavailable on TikTok (Save disabled / TikTok rejected). */
@@ -520,13 +520,21 @@ type RenameMultiResult = RenameUsernameResult & {
  * If a name is unavailable it tries the next candidate **without closing the browser**.
  */
 export async function renameTikTokUsername(opts: {
-  sessionJson: string;
+  /** Required for the standalone-Playwright path; ignored when `existingPage` is given. */
+  sessionJson?: string;
   currentUsername: string;
   /** Primary target name. */
   newUsername: string;
   /** Extra fallback candidates to try in the SAME browser session if the primary is taken. */
   fallbackCandidates?: string[];
   proxy?: PlaywrightProxyConfig;
+  /**
+   * Drive this already-open page instead of launching a throwaway Playwright
+   * browser. Used by the AdsPower path so the rename runs under the SAME
+   * fingerprint and proxy the account logged in with. The caller owns the
+   * browser lifecycle — this function will not close it.
+   */
+  existingPage?: import("playwright").Page;
 }): Promise<RenameMultiResult> {
   const handle = opts.currentUsername.replace(/^@/, "").trim();
   const allCandidates = [
@@ -549,30 +557,45 @@ export async function renameTikTokUsername(opts: {
     proxyServer: opts.proxy?.server ? "(set)" : "(none)",
   });
 
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `tiktok-user-${handle.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.json`
-  );
-  fs.writeFileSync(tmpFile, opts.sessionJson, "utf-8");
-  renameLog("session_tmp_written", { tmpFile: tmpFile.slice(-80) });
+  const useExistingPage = Boolean(opts.existingPage);
+  let tmpFile = "";
+  let browser: import("playwright").Browser | undefined;
 
-  const browser = await launchChromium("automation", opts.proxy?.server ? opts.proxy : undefined);
-  renameLog("browser_launched", { headless: process.env.PLAYWRIGHT_HEADLESS || "false" });
+  if (!useExistingPage) {
+    if (!opts.sessionJson) {
+      return { ...fail("sessionJson is required without existingPage"), triedUnavailable };
+    }
+    tmpFile = path.join(
+      os.tmpdir(),
+      `tiktok-user-${handle.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.json`
+    );
+    fs.writeFileSync(tmpFile, opts.sessionJson, "utf-8");
+    renameLog("session_tmp_written", { tmpFile: tmpFile.slice(-80) });
+    browser = await launchChromium("automation", opts.proxy?.server ? opts.proxy : undefined);
+    renameLog("browser_launched", { headless: process.env.PLAYWRIGHT_HEADLESS || "false" });
+  } else {
+    renameLog("using_existing_page", { reason: "AdsPower profile — same fingerprint as login" });
+  }
 
   try {
-    const context = await browser.newContext({
-      storageState: tmpFile,
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-      locale: "en-US",
-      timezoneId: "America/New_York",
-      viewport: { width: 1366, height: 768 },
-    });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => false });
-    });
-    await installSafeBandwidthRoutes(context);
-    const page = await context.newPage();
+    let page: import("playwright").Page;
+    if (opts.existingPage) {
+      page = opts.existingPage;
+    } else {
+      const context = await browser!.newContext({
+        storageState: tmpFile,
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        locale: "en-US",
+        timezoneId: "America/New_York",
+        viewport: { width: 1366, height: 768 },
+      });
+      await context.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => false });
+      });
+      await installSafeBandwidthRoutes(context);
+      page = await context.newPage();
+    }
 
     const profileUrl = `https://www.tiktok.com/@${encodeURIComponent(handle)}`;
     renameLog("navigate_old_profile", { profileUrl });
@@ -842,12 +865,15 @@ export async function renameTikTokUsername(opts: {
     }
     return { ...fail("TikTok UI did not respond after save"), triedUnavailable };
   } finally {
-    await browser.close().catch(() => {});
-    renameLog("browser_closed");
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      // ignore
+    // With an injected page the caller (AdsPower) owns teardown.
+    if (!useExistingPage) {
+      await browser?.close().catch(() => {});
+      renameLog("browser_closed");
+      try {
+        if (tmpFile) fs.unlinkSync(tmpFile);
+      } catch {
+        // ignore
+      }
     }
   }
 }
