@@ -33,6 +33,7 @@ import {
   type Proxy,
   type SessionPayload,
 } from "./loginAndCaptureSession";
+import { reconcileAccountUsername, handlesMatch, normalizeHandle } from "@/lib/accountReconcile";
 
 // ---------- config ----------
 
@@ -229,6 +230,11 @@ export type AdsPowerCaptureOptions = {
   loginTimeoutMs?: number;
   retries?: number;
   skipCountryCheck?: boolean;
+  /**
+   * Re-capturing a known account: a changed @handle means the user renamed it
+   * on TikTok, so adopt the live name instead of aborting the run.
+   */
+  reconcileUsername?: boolean;
 };
 
 /**
@@ -387,14 +393,33 @@ export async function captureViaAdsPower(
       let tiktokUsername = options.tiktokUsername?.trim() || "";
 
       if (tiktokUsername && extractedUsername) {
-        const expected = tiktokUsername.toLowerCase().replace(/^@/, "");
-        const actual = extractedUsername.toLowerCase().replace(/^@/, "");
-        if (expected !== actual) {
-          throw new Error(
-            `Username mismatch: expected "${tiktokUsername}", logged-in as "${extractedUsername}"`
-          );
+        if (!handlesMatch(tiktokUsername, extractedUsername)) {
+          if (options.reconcileUsername) {
+            // Known account whose handle moved: adopt the live one rather than fail.
+            const outcome = await reconcileAccountUsername(accountId, extractedUsername);
+            if (outcome.changed) {
+              log("username changed on TikTok — reconciled", {
+                accountId,
+                from: outcome.from,
+                to: outcome.to,
+              });
+              tiktokUsername = normalizeHandle(extractedUsername);
+            } else if (outcome.reason === "conflict") {
+              throw new Error(
+                `Username conflict: "${extractedUsername}" already belongs to another account ` +
+                  `(${outcome.conflictAccountId}). Resolve the duplicate before re-capturing.`
+              );
+            } else {
+              tiktokUsername = normalizeHandle(extractedUsername);
+            }
+          } else {
+            throw new Error(
+              `Username mismatch: expected "${tiktokUsername}", logged-in as "${extractedUsername}"`
+            );
+          }
+        } else {
+          log("username verified", { tiktokUsername });
         }
-        log("username verified", { tiktokUsername });
       }
 
       if (!tiktokUsername) {

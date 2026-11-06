@@ -134,8 +134,11 @@ export async function POST(request: Request) {
     }
 
     // Run the full capture
+    // Any capture that targets an account we already know about may legitimately
+    // come back with a different @handle (renamed by hand on TikTok).
     const doc = await captureViaAdsPower(accountId, {
       tiktokUsername,
+      reconcileUsername: true,
     });
 
     return NextResponse.json({
@@ -160,6 +163,9 @@ export async function POST(request: Request) {
       hint = "AdsPower browser started but has no contexts. Try again.";
     } else if (/Login not completed/i.test(msg)) {
       hint = "Login timed out. Complete the TikTok login faster, or try again.";
+    } else if (/Username conflict/i.test(msg)) {
+      hint =
+        "That @handle is already linked to a different account row. Remove or rename the duplicate, then re-capture.";
     } else if (/Username mismatch/i.test(msg)) {
       hint = "You logged into the wrong TikTok account in the AdsPower window.";
     } else if (/Proxy country mismatch/i.test(msg)) {
