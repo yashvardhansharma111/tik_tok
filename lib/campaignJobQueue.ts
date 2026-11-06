@@ -140,6 +140,9 @@ export async function enqueueCampaignWave(campaignLean: any): Promise<void> {
       caption,
       ...(musicQuery ? { musicQuery } : {}),
       musicMode,
+      ...(typeof (c as { allowComments?: unknown }).allowComments === "boolean"
+        ? { allowComments: (c as { allowComments: boolean }).allowComments }
+        : {}),
       status: "pending",
       notBefore: new Date(notBeforeMs),
       parallelism: P,
@@ -196,6 +199,9 @@ export async function afterCampaignUploadSuccess(completedUpload: any): Promise<
       caption,
       ...(musicQuery ? { musicQuery } : {}),
       musicMode,
+      ...(typeof (c as { allowComments?: unknown }).allowComments === "boolean"
+        ? { allowComments: (c as { allowComments: boolean }).allowComments }
+        : {}),
       status: "pending",
       notBefore: new Date(),
       parallelism: c.parallelism,

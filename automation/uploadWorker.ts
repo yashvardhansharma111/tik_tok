@@ -2641,6 +2641,97 @@ function isToggleOn(el: import("playwright").Locator): Promise<boolean> {
 }
 
 /**
+ * Turn OFF "Allow comments" in TikTok Studio when the job asked for comments disabled.
+ *
+ * TikTok ships this control in a few shapes depending on the Studio build:
+ *   - a `role="switch"` labelled "Comment"
+ *   - a `role="checkbox"` inside an "Allow users to:" group
+ *   - a bare `div[class*="Switch__content"][data-state]` next to the label
+ * All three are probed, newest markup first. The control also lives behind
+ * "Show more" on some builds, so that is expanded first.
+ *
+ * Never flips the toggle ON — TikTok already defaults to comments allowed, so
+ * this is a no-op unless `allowComments === false`.
+ */
+async function setCommentsDisabled(
+  page: import("playwright").Page,
+  ctx: FlowContext,
+  maxMs = 20000
+): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+
+  const showMore = page.getByRole("button", { name: /show more/i });
+  if (await showMore.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await showMore.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
+  const label = /^\s*comments?\s*$/i;
+
+  while (Date.now() < deadline) {
+    let toggle: import("playwright").Locator | null = null;
+
+    for (const role of ["switch", "checkbox"] as const) {
+      const byRole = page.getByRole(role, { name: label });
+      if ((await byRole.count()) > 0 && (await byRole.first().isVisible().catch(() => false))) {
+        toggle = byRole.first();
+        break;
+      }
+    }
+
+    if (!toggle) {
+      const textEl = page.getByText(label, { exact: false }).first();
+      if (await textEl.isVisible({ timeout: 1500 }).catch(() => false)) {
+        const block = textEl.locator(
+          'xpath=ancestor::*[self::div or self::section][.//div[contains(@class,"Switch__content")] or .//*[@role="switch"] or .//*[@role="checkbox"]][1]'
+        );
+        const switchContent = block.locator('div[class*="Switch__content"][data-state]').first();
+        if (await switchContent.isVisible().catch(() => false)) {
+          toggle = switchContent;
+        } else {
+          const inner = block.locator('[role="switch"], [role="checkbox"]').first();
+          if (await inner.isVisible().catch(() => false)) toggle = inner;
+        }
+      }
+    }
+
+    if (toggle) {
+      await toggle.scrollIntoViewIfNeeded().catch(() => {});
+      if (!(await toggle.isDisabled().catch(() => true))) {
+        if (!(await isToggleOn(toggle))) {
+          ctx.flow("comments: already disabled");
+          return true;
+        }
+        await toggle.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(450);
+        if (!(await isToggleOn(toggle))) {
+          ctx.flow("comments: turned OFF");
+          return true;
+        }
+        // Some builds only respond to the hidden input.
+        const nearInput = toggle
+          .locator('xpath=.//input[@role="switch" or @type="checkbox"] | following::input[@role="switch" or @type="checkbox"][1]')
+          .first();
+        if (await nearInput.count().catch(() => 0)) {
+          await nearInput.click({ force: true }).catch(() => {});
+          await nearInput.press(" ").catch(() => {});
+          await page.waitForTimeout(350);
+          if (!(await isToggleOn(toggle))) {
+            ctx.flow("comments: turned OFF (input fallback)");
+            return true;
+          }
+        }
+      }
+    }
+
+    await page.waitForTimeout(scaledHumanRand(420, 780));
+  }
+
+  ctx.flow("comments: WARN could not find/turn off the comment toggle — posting with TikTok default");
+  return false;
+}
+
+/**
  * Uncheck Music copyright check + Content check lite before Post (TikTok Studio).
  * @param maxMsPerPattern — time to wait for each toggle to become clickable (checks can block UI briefly).
  */
@@ -2767,6 +2858,8 @@ export type RunUploadSessionOptions = {
   holdSessionForChain?: boolean;
   /** How to handle the sound step; omitted means infer from `musicQuery` (legacy behaviour). */
   musicMode?: MusicMode;
+  /** false disables comments on the post; omitted/true keeps TikTok's default. */
+  allowComments?: boolean;
 };
 
 export type TikTokUploadRunResult = {
@@ -2800,7 +2893,8 @@ export async function runStudioUploadPipeline(
   caption: string,
   musicQuery: string | undefined,
   username: string,
-  musicMode?: MusicMode
+  musicMode?: MusicMode,
+  allowComments?: boolean
 ): Promise<TikTokUploadRunResult> {
   let soundUsed: string | undefined;
 
@@ -2885,6 +2979,21 @@ export async function runStudioUploadPipeline(
     "turn off Music copyright + Content check lite (per-toggle loop with scaledHumanRand 420–780ms retries)",
     `maxMsPerPattern=32000 HUMAN_TIMING_SCALE=${getHumanTimingScale()}`
   );
+
+  // Comment permission lives in the same "more options" area as the toggles above.
+  if (allowComments === false) {
+    ctx.flow("comments: job requested comments OFF");
+    const tComments = Date.now();
+    const ok = await setCommentsDisabled(page, ctx);
+    flowTiming(
+      ctx,
+      "post",
+      "post_comments_off",
+      Date.now() - tComments,
+      "turn off Allow comments before Post",
+      `allowComments=false applied=${ok}`
+    );
+  }
 
   await logMusicRelatedControls(page, ctx);
   await page.waitForTimeout(scaledHumanRand(80, 160));
@@ -3141,7 +3250,7 @@ export async function runUploadWithSession(
       await ctx.shot(page, "step-1-open-page.png");
     }
 
-    const pipelineResult = await runStudioUploadPipeline(page, ctx, videoPath, caption, musicQuery, username, sessionOptions?.musicMode);
+    const pipelineResult = await runStudioUploadPipeline(page, ctx, videoPath, caption, musicQuery, username, sessionOptions?.musicMode, sessionOptions?.allowComments);
     soundUsed = pipelineResult.soundUsed;
     return done(pipelineResult);
   } catch (e) {

@@ -343,6 +343,9 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
 
       // Legacy rows have no musicMode — resolveMusicMode infers the old behaviour.
       const musicMode = resolveMusicMode((updated as any).musicMode, musicQuery);
+      // Absent on legacy rows -> undefined -> TikTok default (comments allowed).
+      const allowComments: boolean | undefined =
+        typeof (updated as any).allowComments === "boolean" ? (updated as any).allowComments : undefined;
 
       const attemptNumber: number = updated.attempts || 1;
 
@@ -376,6 +379,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         attemptNumber,
         musicQuery: musicQuery || "(none)",
         musicMode,
+        allowComments,
         chained: Boolean(sessionHandle),
         via: useAdsPower ? "adspower" : "playwright",
         ...(useAdsPower ? { adspowerProfileId: capturedAccount!.adspowerProfileId } : {}),
@@ -396,11 +400,13 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
         // ━━━━━ AdsPower path: same fingerprint as login, no proxy/cookie juggling ━━━━━
         const adspResult = await uploadViaAdsPower({
           adspowerProfileId: capturedAccount!.adspowerProfileId!,
+          accountId: String(accountId),
           username: (accountDoc as any).username,
           videoPath: videoForUpload,
           caption,
           musicQuery,
           musicMode,
+          allowComments,
         });
 
         // If AdsPower detected session expired, mark account as logged_out immediately
@@ -437,6 +443,7 @@ async function processUpload(initialUpload: any, browser: Browser | undefined) {
             ? { reuse: sessionHandle, holdSessionForChain: true as const }
             : {}),
           musicMode,
+          allowComments,
         };
 
         result = await runUploadWithSession(

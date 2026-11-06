@@ -27,6 +27,7 @@ export default function UploadPage() {
   const [caption, setCaption] = useState("");
   const [musicQuery, setMusicQuery] = useState("");
   const [musicMode, setMusicMode] = useState<MusicMode>("trending");
+  const [allowComments, setAllowComments] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [parallelism, setParallelism] = useState(4);
@@ -155,6 +156,7 @@ export default function UploadPage() {
     form.append("video", file);
     form.append("caption", caption);
     form.append("musicMode", musicMode);
+    form.append("allowComments", allowComments ? "true" : "false");
     if (musicMode === "search" && musicQuery.trim()) {
       form.append("musicQuery", musicQuery.trim());
     }
@@ -328,6 +330,23 @@ export default function UploadPage() {
                 Add sound is skipped entirely — the video posts with whatever audio it already has.
               </span>
             )}
+
+            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 transition hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-rose-600"
+                checked={!allowComments}
+                onChange={(e) => setAllowComments(!e.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Turn off comments
+                </span>
+                <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                  Disables commenting on the post. Leave unchecked to keep TikTok&apos;s default (comments on).
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">

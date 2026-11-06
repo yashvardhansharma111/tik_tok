@@ -41,6 +41,7 @@ export async function POST(request: Request) {
     let caption = "";
     let musicQuery = "";
     let musicModeRaw = "";
+    let allowComments = true;
     let accountIds: string[] = [];
     let parallelism = 4;
     let staggerSeconds = 0;
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
       if (name === "caption") caption = val;
       if (name === "musicQuery") musicQuery = val;
       if (name === "musicMode") musicModeRaw = val;
+      if (name === "allowComments") allowComments = String(val) !== "false";
       if (name === "parallelism") {
         const n = Number.parseInt(String(val || "").trim(), 10);
         if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(32, n));
@@ -193,6 +195,7 @@ export async function POST(request: Request) {
       hasMusicQuery: normalizedMusicQuery.length > 0,
       musicQuery: normalizedMusicQuery || "(none)",
       musicMode,
+      allowComments,
       parallelism: normalizedParallelism,
       staggerSeconds,
       scheduledStartAt: hasSchedule ? scheduledStartAt : "(immediate)",
@@ -248,6 +251,7 @@ export async function POST(request: Request) {
         caption: rowCaption,
         ...(normalizedMusicQuery ? { musicQuery: normalizedMusicQuery } : {}),
         musicMode,
+        allowComments,
         status: "pending",
         timestamp: new Date(),
         notBefore,
@@ -265,6 +269,7 @@ export async function POST(request: Request) {
       uploadId,
       musicQuery: normalizedMusicQuery || null,
       musicMode,
+      allowComments,
       parallelism: normalizedParallelism,
       staggerSeconds,
       scheduledStartAt: hasSchedule ? scheduledStartAt : null,

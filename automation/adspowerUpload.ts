@@ -28,17 +28,22 @@ import {
 } from "./uploadWorker";
 import { isTikTokSessionLoggedOut } from "@/lib/tiktokSessionHealth";
 import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
+import { reconcileAccountUsername, handlesMatch } from "@/lib/accountReconcile";
+import { extractTikTokUsername } from "./loginAndCaptureSession";
 import type { MusicMode } from "@/lib/musicMode";
 
 // ---------- types ----------
 
 export type AdsPowerUploadOptions = {
   adspowerProfileId: string;
+  /** Mongo account _id — enables handle reconciliation when TikTok shows a different @name. */
+  accountId?: string;
   username: string;
   videoPath: string;
   caption: string;
   musicQuery?: string;
   musicMode?: MusicMode;
+  allowComments?: boolean;
 };
 
 export type AdsPowerUploadResult = {
@@ -82,7 +87,7 @@ function warn(msg: string, extra?: Record<string, unknown>) {
 export async function uploadViaAdsPower(
   opts: AdsPowerUploadOptions
 ): Promise<AdsPowerUploadResult> {
-  const { adspowerProfileId, username, videoPath, caption, musicQuery, musicMode } = opts;
+  const { adspowerProfileId, accountId, username, videoPath, caption, musicQuery, musicMode, allowComments } = opts;
   const ctx = createFlowContext(username);
 
   let browser: Browser | undefined;
@@ -137,6 +142,33 @@ export async function uploadViaAdsPower(
       };
     }
 
+    // The handle may have been changed by hand on TikTok since capture. Adopt it
+    // so history and logs stay truthful. Best-effort only — never fail an upload
+    // over a cosmetic mismatch.
+    if (accountId) {
+      try {
+        const live = await extractTikTokUsername(page);
+        if (live && !handlesMatch(live, username)) {
+          const outcome = await reconcileAccountUsername(accountId, live);
+          if (outcome.changed) {
+            warn("TikTok handle changed outside the app — updated", {
+              accountId,
+              from: outcome.from,
+              to: outcome.to,
+            });
+          } else if (outcome.reason === "conflict") {
+            warn("TikTok handle changed but another account already holds it", {
+              accountId,
+              live,
+              conflictAccountId: outcome.conflictAccountId,
+            });
+          }
+        }
+      } catch (e) {
+        warn("handle reconcile skipped", { error: (e as Error).message?.slice(0, 120) });
+      }
+    }
+
     // Dismiss any popups and wait for file input
     await dismissTikTokPopups(page);
     const inputOk = await waitForFileInput(page, ctx, 90_000);
@@ -157,7 +189,8 @@ export async function uploadViaAdsPower(
       caption,
       musicQuery,
       username,
-      musicMode
+      musicMode,
+      allowComments
     );
 
     log(result.success ? "upload success" : "upload failed", {

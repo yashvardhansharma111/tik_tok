@@ -68,7 +68,7 @@ async function cleanupBatchIfLast(videoPath: string, uploadId: string) {
 }
 
 async function processUpload(job: Job<UploadJobPayload>) {
-  const { uploadId, accountId, username, session, proxy, videoPath, caption, musicQuery, musicMode } = job.data;
+  const { uploadId, accountId, username, session, proxy, videoPath, caption, musicQuery, musicMode, allowComments } = job.data;
   const maxAttempts = typeof job.opts?.attempts === "number" ? job.opts.attempts : 2;
   const shouldRetryAfterThis = job.attemptsMade + 1 < maxAttempts;
   const attemptNumber = job.attemptsMade + 1;
@@ -121,7 +121,7 @@ async function processUpload(job: Job<UploadJobPayload>) {
       proxyConfig,
       activeBrowser,
       musicQuery,
-      { musicMode: resolveMusicMode(musicMode, musicQuery) }
+      { musicMode: resolveMusicMode(musicMode, musicQuery), allowComments }
     );
 
     if (result.success) {

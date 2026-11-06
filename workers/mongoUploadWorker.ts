@@ -139,6 +139,8 @@ async function processOneUpload(initialUpload: any, browser: import("playwright"
           ? updated.musicQuery.trim()
           : undefined;
       const musicMode = resolveMusicMode((updated as any).musicMode, musicQuery);
+      const allowComments: boolean | undefined =
+        typeof (updated as any).allowComments === "boolean" ? (updated as any).allowComments : undefined;
 
       const videoForUpload = await resolveOptimizedVideoPath(videoPath);
 
@@ -147,6 +149,7 @@ async function processOneUpload(initialUpload: any, browser: import("playwright"
           ? { reuse: sessionHandle, holdSessionForChain: true as const }
           : {}),
         musicMode,
+        allowComments,
       };
 
       const result = await runUploadWithSession(

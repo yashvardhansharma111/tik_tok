@@ -18,6 +18,8 @@ const UploadSchema = new Schema(
     musicQuery: { type: String, required: false },
     /** "trending" | "search" | "none"; absent on pre-existing rows. */
     musicMode: { type: String, required: false },
+    /** false disables comments on the post; absent means TikTok default (allowed). */
+    allowComments: { type: Boolean, required: false },
     soundUsed: { type: String, required: false },
     attempts: { type: Number, default: 0, index: true },
     nextRetryAt: { type: Date, default: null, index: true },

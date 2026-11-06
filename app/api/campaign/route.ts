@@ -42,6 +42,7 @@ export async function POST(request: Request) {
     let musicQueries: string[] = [];
     let musicQuerySingle = "";
     let musicModeRaw = "";
+    let allowComments = true;
     let parallelism = 5;
     let staggerSeconds = 0;
     let cycleGapSeconds = 60;
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
       }
       if (name === "musicQuery") musicQuerySingle = String(val ?? "").trim();
       if (name === "musicMode") musicModeRaw = String(val ?? "").trim();
+      if (name === "allowComments") allowComments = String(val ?? "") !== "false";
       if (name === "parallelism") {
         const n = Number.parseInt(String(val || "").trim(), 10);
         if (Number.isFinite(n)) parallelism = Math.max(1, Math.min(UPLOAD_PARALLELISM_UI_MAX, n));
@@ -284,6 +286,7 @@ export async function POST(request: Request) {
       captions,
       ...(musicQueryFinal ? { musicQuery: musicQueryFinal } : {}),
       musicMode,
+      allowComments,
       musicQueries: [],
       perAccountVideoOrder,
       captionMode,

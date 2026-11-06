@@ -26,6 +26,7 @@ export type UploadJobPayload = {
   caption: string;
   musicQuery?: string;
   musicMode?: MusicMode;
+  allowComments?: boolean;
   uploadDocId?: string;
 };
 

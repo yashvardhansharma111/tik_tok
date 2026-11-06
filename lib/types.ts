@@ -27,6 +27,7 @@ export interface UploadHistoryItem {
   caption: string;
   musicQuery?: string;
   musicMode?: MusicMode;
+  allowComments?: boolean;
   soundUsed?: string;
   status: "pending" | "uploading" | "success" | "failed";
   error?: string;

@@ -14,6 +14,7 @@ const CampaignSchema = new Schema(
     musicQuery: { type: String, required: false },
     /** "trending" | "search" | "none"; absent on pre-existing campaigns. */
     musicMode: { type: String, required: false },
+    allowComments: { type: Boolean, required: false },
     /** @deprecated legacy per-line sound; use `musicQuery` */
     musicQueries: [{ type: String, required: false }],
     /** Per account: permutation of indices into videoRelPaths (shuffle or identity). */
@@ -45,6 +46,7 @@ export type CampaignDoc = {
   captions: string[];
   musicQuery?: string | null;
   musicMode?: string | null;
+  allowComments?: boolean | null;
   musicQueries?: string[];
   perAccountVideoOrder: number[][];
   captionMode: "same" | "per_video" | "ai_unique_each";
