@@ -2884,6 +2884,68 @@ export async function discardUploadSessionHandle(handle: TikTokUploadSessionHand
 }
 
 /**
+ * Attach the video to TikTok's file input.
+ *
+ * `locator.setInputFiles()` streams the file's bytes over the wire and Playwright
+ * caps that at 50MB for any browser it considers remote. `connectOverCDP()` —
+ * how we attach to AdsPower — always counts as remote, even though AdsPower is
+ * running on this very machine, so every video over 50MB died with:
+ *   "Cannot transfer files larger than 50Mb to a browser not co-located with the server"
+ *
+ * CDP's own `DOM.setFileInputFiles` takes a *path* and lets the browser open the
+ * file from disk, so nothing is transferred and no cap applies. That is correct
+ * whenever the browser shares a filesystem with us (AdsPower local, and the
+ * standalone Playwright path). If it ever fails we fall back to the original
+ * call, which still works for files under the limit.
+ */
+async function attachVideoFile(
+  page: Page,
+  videoPath: string,
+  ctx: FlowContext
+): Promise<void> {
+  const abs = path.resolve(videoPath);
+  let sizeMb = 0;
+  try {
+    sizeMb = fs.statSync(abs).size / (1024 * 1024);
+  } catch {
+    // stat is only for logging; let the attach attempt surface a real error
+  }
+
+  try {
+    const client = await page.context().newCDPSession(page);
+    try {
+      const { root } = (await client.send("DOM.getDocument", { depth: -1, pierce: true })) as {
+        root: { nodeId: number };
+      };
+      const { nodeId } = (await client.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: TIKTOK_STUDIO_SELECTORS.uploadFileInput,
+      })) as { nodeId: number };
+
+      if (!nodeId) throw new Error("file input not found via CDP DOM.querySelector");
+
+      await client.send("DOM.setFileInputFiles", { files: [abs], nodeId });
+      ctx.flow(`video upload: attached via CDP DOM.setFileInputFiles (${sizeMb.toFixed(1)}MB, no size cap)`);
+      return;
+    } finally {
+      await client.detach().catch(() => {});
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ctx.flow(`video upload: CDP attach failed (${msg.slice(0, 120)}) — falling back to setInputFiles`);
+  }
+
+  if (sizeMb > 50) {
+    ctx.flow(
+      `video upload: WARN ${sizeMb.toFixed(1)}MB exceeds Playwright's 50MB remote-transfer cap and the CDP path is unavailable — this will likely fail`
+    );
+  }
+  const fileInput = page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first();
+  await fileInput.setInputFiles(abs);
+  ctx.flow(`video upload: attached via setInputFiles (${sizeMb.toFixed(1)}MB)`);
+}
+
+/**
  * Upload → caption → sound → toggles → Post (assumes upload UI is ready with file input available).
  */
 export async function runStudioUploadPipeline(
@@ -2902,10 +2964,9 @@ export async function runStudioUploadPipeline(
   await humanPause(page, 120, 280);
   await humanScroll(page);
 
-  ctx.flow("video upload: setInputFiles on file input");
-  const fileInput = page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first();
-  await fileInput.setInputFiles(videoPath);
-  ctx.flow("setInputFiles dispatched");
+  ctx.flow("video upload: attaching file to input");
+  await attachVideoFile(page, videoPath, ctx);
+  ctx.flow("file attach dispatched");
 
   const settleLoops = Math.max(2, Math.min(5, Number(process.env.UPLOAD_AFTER_FILE_SETTLE_LOOPS || 3)));
   for (let i = 0; i < settleLoops; i++) {
