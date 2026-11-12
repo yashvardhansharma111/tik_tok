@@ -13,7 +13,60 @@ export async function dismissTikTokPopups(page: Page): Promise<void> {
     dismissTikTokShopBanner(page),
     dismissCookieConsent(page),
     dismissGenericBottomBanner(page),
+    dismissUnsavedDraftBanner(page),
   ]);
+}
+
+/**
+ * "A video you were editing wasn't saved. Continue editing?"  [Discard] [Continue]
+ *
+ * TikTok Studio shows this when a previous editing session ended without
+ * posting — which happens every time a run is interrupted (crash, the 50MB
+ * attach failure, or stopping the AdsPower browser mid-upload). Left alone the
+ * banner keeps Studio in a half-restored state and the upload button sits
+ * spinning, so no new file can be attached.
+ *
+ * Always chooses Discard: "Continue" would reload the PREVIOUS video and
+ * caption, so an automated run would post the wrong content. The draft being
+ * discarded is the wreckage of an earlier failed run, never anything a person
+ * authored here.
+ *
+ * Returns true when a banner was found and dismissed.
+ */
+export async function dismissUnsavedDraftBanner(page: Page): Promise<boolean> {
+  const bannerText = /wasn.{0,3}t saved|continue editing\?/i;
+
+  // Scope to the banner so we never click a "Discard" belonging to something else.
+  const banner = page
+    .locator("div, section, aside")
+    .filter({ hasText: bannerText })
+    .last();
+
+  if (!(await banner.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+
+  const discardCandidates = [
+    banner.getByRole("button", { name: /^\s*discard\s*$/i }).first(),
+    banner.locator("button").filter({ hasText: /^\s*discard\s*$/i }).first(),
+    page.getByRole("button", { name: /^\s*discard\s*$/i }).first(),
+  ];
+
+  for (const btn of discardCandidates) {
+    if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await btn.click({ force: true }).catch(() => {});
+      await page.waitForTimeout(900);
+      // Confirm it is gone; some builds ask to confirm the discard.
+      if (!(await banner.isVisible({ timeout: 1200 }).catch(() => false))) return true;
+      const confirm = page
+        .getByRole("button", { name: /^\s*(discard|confirm|yes|ok)\s*$/i })
+        .first();
+      if (await confirm.isVisible({ timeout: 1200 }).catch(() => false)) {
+        await confirm.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(700);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 /** GDPR / EEA data-transfer banner – "Got it" button (top bar). */

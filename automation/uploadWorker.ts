@@ -1,6 +1,6 @@
 import { launchChromium } from "@/lib/playwrightLaunch";
 import { installSafeBandwidthRoutes } from "@/lib/playwrightSafeBandwidthRoutes";
-import { dismissTikTokPopups } from "@/lib/tiktokPopupDismiss";
+import { dismissTikTokPopups, dismissUnsavedDraftBanner } from "@/lib/tiktokPopupDismiss";
 import {
   discardUploadContext,
   makeUploadContextPoolKey,
@@ -453,6 +453,12 @@ async function logCoreElements(page: Page, ctx: FlowContext): Promise<void> {
 }
 
 export async function waitForFileInput(page: Page, ctx: FlowContext, timeoutMs: number): Promise<boolean> {
+  // A leftover "video you were editing wasn't saved" banner keeps Studio in a
+  // half-restored state and the upload control spinning, so clear it first.
+  if (await dismissUnsavedDraftBanner(page).catch(() => false)) {
+    ctx.flow("draft: discarded leftover unsaved-draft banner");
+    await page.waitForTimeout(800);
+  }
   ctx.flow(`wait: file input attached (${TIKTOK_STUDIO_SELECTORS.uploadFileInput})`);
   try {
     await page.locator(TIKTOK_STUDIO_SELECTORS.uploadFileInput).first().waitFor({ state: "attached", timeout: timeoutMs });
@@ -2963,6 +2969,11 @@ export async function runStudioUploadPipeline(
   ctx.flow("human: brief pause before choosing file");
   await humanPause(page, 120, 280);
   await humanScroll(page);
+
+  if (await dismissUnsavedDraftBanner(page).catch(() => false)) {
+    ctx.flow("draft: discarded leftover unsaved-draft banner (late)");
+    await page.waitForTimeout(800);
+  }
 
   ctx.flow("video upload: attaching file to input");
   await attachVideoFile(page, videoPath, ctx);
